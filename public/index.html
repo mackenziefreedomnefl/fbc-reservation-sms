@@ -262,7 +262,7 @@ const EXPECTED_FIELDS = [
   { key: "email", label: "Email", required: false, aliases: ["email address", "member email", "guest email", "email", "e-mail"] },
   { key: "phone", label: "Phone", required: false, aliases: ["phone number", "phone", "tel", "telephone", "mobile", "cell"] },
   { key: "service", label: "Resource / Boat", required: false, aliases: ["resource name", "resource", "boat", "service", "type", "reservation type", "event type", "booking type", "event"] },
-  { key: "date", label: "Reservation Date", required: true, aliases: ["reservation date", "booking date", "event date", "date", "day"] },
+  { key: "date", label: "Reservation Date", required: false, aliases: ["reservation date", "booking date", "event date", "date", "day", "start date", "local start date"] },
   { key: "time", label: "Arrival Time", required: false, aliases: ["arrival time", "start time", "reservation time", "booking time", "arrival", "time"] },
   { key: "endTime", label: "Return Time", required: false, aliases: ["return time", "end time", "departure time", "return", "departure"] },
   { key: "guests", label: "Guests", required: false, aliases: ["number of guests", "party size", "# guests", "guests", "party", "covers", "pax", "size"] },
@@ -289,6 +289,28 @@ function autoMapColumns(headers) {
     if (idx !== -1) { mapping[field.key] = headers[idx]; used.add(idx); }
   });
   return mapping;
+}
+
+// FBC's "Reservations Tomorrow" Excel export has ~11 rows of title and filter
+// metadata before the actual header row. Scan the first ~30 rows and pick the
+// one whose cells best match known field aliases.
+function detectHeaderRow(aoa) {
+  const allAliases = [];
+  EXPECTED_FIELDS.forEach((f) => f.aliases.forEach((a) => allAliases.push(a)));
+  let bestIdx = 0;
+  let bestScore = 0;
+  const limit = Math.min(aoa.length, 30);
+  for (let i = 0; i < limit; i++) {
+    const row = aoa[i] || [];
+    let score = 0;
+    for (const cell of row) {
+      const lower = String(cell ?? "").toLowerCase().trim();
+      if (!lower) continue;
+      if (allAliases.some((a) => lower === a || lower.includes(a))) score++;
+    }
+    if (score > bestScore) { bestScore = score; bestIdx = i; }
+  }
+  return bestScore >= 2 ? bestIdx : 0;
 }
 
 function parseExcelDate(value) {
@@ -326,9 +348,15 @@ function parseTime(value, baseDate) {
 }
 
 function rowsToReservations(rows, mapping) {
+  // FBC "Reservations Tomorrow" exports omit the date column. When no date
+  // column is mapped, default the base date to tomorrow rather than today.
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(0, 0, 0, 0);
+  const hasDateColumn = Boolean(mapping.date);
   return rows.map((row, i) => {
-    const get = (key) => row[mapping[key]] ?? "";
-    const baseDate = parseExcelDate(get("date"));
+    const get = (key) => (mapping[key] ? row[mapping[key]] ?? "" : "");
+    const baseDate = hasDateColumn ? parseExcelDate(get("date")) || tomorrow : tomorrow;
     const dateWithTime = parseTime(get("time"), baseDate);
     const endTimeRaw = mapping.endTime ? get("endTime") : "";
     const endTime = endTimeRaw ? parseTime(endTimeRaw, baseDate) : null;
@@ -341,7 +369,7 @@ function rowsToReservations(rows, mapping) {
       email: String(get("email")).trim(),
       phone: String(get("phone")).trim(),
       service: String(get("service")).trim() || "Reservation",
-      date: dateWithTime || new Date(),
+      date: dateWithTime || tomorrow,
       endTime: endTime,
       guests: parseInt(get("guests")) || 1,
       status: "unconfirmed",
@@ -1403,14 +1431,37 @@ function UploadPanel({ dispatch, dockName }) {
         const workbook = XLSX.read(data, { type: "array", cellDates: true });
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
-        const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-        if (json.length === 0) {
+        const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", blankrows: false });
+        if (aoa.length === 0) {
           setError("The file appears to be empty. Please check your data.");
           return;
         }
-        const hdrs = Object.keys(json[0]);
+        const headerRowIdx = detectHeaderRow(aoa);
+        const rawHeaders = aoa[headerRowIdx] || [];
+        // Drop empty header cells — FBC reports include margin/spacer columns.
+        const keepIdx = [];
+        const hdrs = [];
+        rawHeaders.forEach((h, idx) => {
+          const trimmed = String(h ?? "").trim();
+          if (trimmed) { keepIdx.push(idx); hdrs.push(trimmed); }
+        });
+        if (hdrs.length === 0) {
+          setError("Couldn't find a header row in this file. Make sure the first row of your table contains column names.");
+          return;
+        }
+        const dataRows = aoa.slice(headerRowIdx + 1)
+          .map((row) => {
+            const obj = {};
+            keepIdx.forEach((idx, hi) => { obj[hdrs[hi]] = row[idx] ?? ""; });
+            return obj;
+          })
+          .filter((r) => Object.values(r).some((v) => String(v ?? "").trim()));
+        if (dataRows.length === 0) {
+          setError("No data rows found below the header. Please check your file.");
+          return;
+        }
         setHeaders(hdrs);
-        setRows(json);
+        setRows(dataRows);
         const autoMap = autoMapColumns(hdrs);
         setMapping(autoMap);
         setStep("mapping");
@@ -1434,8 +1485,8 @@ function UploadPanel({ dispatch, dockName }) {
   }, [processFile]);
 
   const handleImport = () => {
-    if (!mapping.name || !mapping.date) {
-      setError("Member Name and Reservation Date are required fields. Please map them before importing.");
+    if (!mapping.name) {
+      setError("Member Name is a required field. Please map it before importing.");
       return;
     }
     const reservations = rowsToReservations(rows, mapping);
