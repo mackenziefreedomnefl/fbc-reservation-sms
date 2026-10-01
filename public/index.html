@@ -270,8 +270,9 @@ const api = {
     return res.json();
   },
 
-  async fetchReservations(dockId) {
-    const res = await fetch(`${API_BASE}/api/reservations?dock=${dockId}`, {
+  async fetchReservations(dockId, date) {
+    const qs = date ? `&date=${encodeURIComponent(date)}` : "";
+    const res = await fetch(`${API_BASE}/api/reservations?dock=${dockId}${qs}`, {
       credentials: "same-origin",
     });
     return res.json();
@@ -554,6 +555,8 @@ function rowsToReservations(rows, mapping) {
 // ─── Reducer ─────────────────────────────────────────────────────
 function reducer(state, action) {
   switch (action.type) {
+    case "SET_VIEW_DATE":
+      return { ...state, viewDate: action.payload, reservations: [], selected: new Set(), selectedId: null };
     case "SET_DOCK":
       return { ...state, currentDock: action.payload, view: "reservations", reservations: [], selected: new Set(), selectedId: null };
     case "SWITCH_DOCK":
@@ -794,7 +797,46 @@ function StatusBadge({ status }) {
   );
 }
 
-function Scoreboard({ items }) {
+function clubDateStr(offsetDays) {
+  return new Date(Date.now() + offsetDays * 86400000)
+    .toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+}
+function shortDayLabel(dateStr) {
+  return new Date(dateStr + "T12:00:00")
+    .toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+}
+
+function DaySwitch({ viewDate, onChange }) {
+  const isCustom = viewDate !== "today" && viewDate !== "tomorrow";
+  const opts = [
+    { key: "today", label: "Today" },
+    { key: "tomorrow", label: "Tomorrow" },
+  ];
+  if (isCustom) opts.push({ key: viewDate, label: shortDayLabel(viewDate) });
+  return (
+    <div style={{ display: "flex", gap: 0, flexShrink: 0, border: `1.5px solid ${palette.border}`, borderRadius: 9, overflow: "hidden" }}>
+      {opts.map((o) => {
+        const active = viewDate === o.key;
+        return (
+          <button
+            key={o.key}
+            onClick={() => { if (!active) onChange(o.key); }}
+            title={o.key === "today" ? shortDayLabel(clubDateStr(0)) : o.key === "tomorrow" ? shortDayLabel(clubDateStr(1)) : o.key}
+            style={{
+              padding: "7px 13px", border: "none", whiteSpace: "nowrap",
+              background: active ? palette.dark : palette.card,
+              color: active ? "#fff" : palette.muted,
+              fontSize: 12, fontWeight: 700, cursor: active ? "default" : "pointer",
+              fontFamily: "'Open Sans', sans-serif", transition: "all 0.15s",
+            }}
+          >{o.label}</button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Scoreboard({ items, leading }) {
   return (
     <div style={{
       display: "flex", alignItems: "center",
@@ -803,6 +845,10 @@ function Scoreboard({ items }) {
       padding: "10px 16px", marginBottom: 14,
       overflowX: "auto", WebkitOverflowScrolling: "touch",
     }}>
+      {leading}
+      {leading && (
+        <div style={{ width: 1, alignSelf: "stretch", background: palette.border, margin: "0 14px", flexShrink: 0 }} />
+      )}
       {items.map((it, i) => (
         <React.Fragment key={it.label}>
           {i > 0 && (
@@ -1171,7 +1217,7 @@ function DatePullControl({ onLoaded }) {
           if (l && l.target_date === date && (l.status === "done" || l.status === "error")) {
             if (l.status === "done") {
               setMsg(`Loaded ${l.result_count != null ? l.result_count + " " : ""}reservation(s) for ${date}.`);
-              if (onLoaded) onLoaded();
+              if (onLoaded) onLoaded(date);
             } else {
               setMsg("Pull failed — try again in a moment.");
             }
@@ -3965,6 +4011,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
     smsDrawer: null,
     smsCompose: null, // { id, body, mode: "single"|"bulk" }
     currentDock: null, // dock id
+    viewDate: "today", // "today" | "tomorrow" | "YYYY-MM-DD" (admin date pull)
     view: "dock-select", // start at dock selection
     conversationPhone: null, // phone of the conversation drawer (if open)
     batchDetailId: null, // import_batches.id for the read-only batch detail modal
@@ -4056,7 +4103,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
 
     const poll = async () => {
       try {
-        const data = await api.fetchReservations(state.currentDock);
+        const data = await api.fetchReservations(state.currentDock, state.viewDate);
         if (active && data.reservations) {
           const parsed = data.reservations.map((r) => ({
             ...r,
@@ -4070,9 +4117,10 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
       } catch { /* silently fail */ }
     };
 
+    poll();
     const interval = setInterval(poll, 5000);
     return () => { active = false; clearInterval(interval); };
-  }, [state.currentDock, me?.franchise?.twilioConfigured]);
+  }, [state.currentDock, state.viewDate, me?.franchise?.twilioConfigured]);
 
   const filtered = state.reservations
     .filter((r) => state.filter === "all" || r.status === state.filter)
@@ -4098,7 +4146,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
   const refreshFromServer = async () => {
     if (!state.currentDock) return;
     try {
-      const data = await api.fetchReservations(state.currentDock);
+      const data = await api.fetchReservations(state.currentDock, state.viewDate);
       if (data.reservations) dispatch({ type: "LOAD_DATA_SILENT", payload: data.reservations.map((r) => ({ ...r, date: new Date(r.date), endTime: r.endTime ? new Date(r.endTime) : null, messageTime: r.messageTime ? new Date(r.messageTime) : null, smsLog: (r.smsLog || []).map((m) => ({ ...m, time: new Date(m.time) })) })) });
     } catch { /* silently fail */ }
   };
@@ -4507,19 +4555,6 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
           <UsersPanel palette={palette} />
         ) : state.view === "feedback" && me && me.user && me.user.role === "super_admin" ? (
           <AdminFeedbackPanel palette={palette} />
-        ) : state.view === "reservations" && state.reservations.length === 0 ? (
-          <div style={{
-            padding: "60px 24px", textAlign: "center", color: palette.muted,
-            fontFamily: "'Open Sans', sans-serif",
-          }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>⚓</div>
-            <div style={{ fontSize: 16, fontWeight: 600, color: palette.dark, marginBottom: 6 }}>
-              No reservations loaded yet
-            </div>
-            <div style={{ fontSize: 13, lineHeight: 1.5, maxWidth: 360, margin: "0 auto" }}>
-              Tomorrow's reservations load automatically from Salesforce each afternoon. Check back after they sync, or pick a different dock.
-            </div>
-          </div>
         ) : state.view === "activity" ? (
           <div style={{ padding: "60px 24px", textAlign: "center", color: palette.muted, fontFamily: "'Open Sans', sans-serif" }}>
             This section is no longer used.
@@ -4527,7 +4562,10 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
         ) : state.view === "reservations" ? (
           <>
             {me && me.user && (me.user.role === "super_admin" || me.user.role === "franchise_admin") && (
-              <DatePullControl onLoaded={() => dispatch({ type: "REFRESH" })} />
+              <DatePullControl onLoaded={(date) => {
+                const sentinel = date === clubDateStr(0) ? "today" : date === clubDateStr(1) ? "tomorrow" : date;
+                dispatch({ type: "SET_VIEW_DATE", payload: sentinel });
+              }} />
             )}
             {/* Dock switcher + refresh */}
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
@@ -4552,7 +4590,14 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
               ><span style={{ fontSize: 14 }}>↻</span> Refresh</button>
             </div>
             {/* Scoreboard */}
-            <Scoreboard items={[
+            <Scoreboard
+              leading={
+                <DaySwitch
+                  viewDate={state.viewDate}
+                  onChange={(d) => dispatch({ type: "SET_VIEW_DATE", payload: d })}
+                />
+              }
+              items={[
               { label: "Total", value: counts.all, color: palette.dark },
               { label: "Confirmed", value: counts.confirmed, sub: counts.all > 0 ? `${((counts.confirmed / counts.all) * 100).toFixed(0)}%` : null, color: palette.green },
               { label: "Pending", value: counts.pending, color: palette.amber },
@@ -4629,7 +4674,20 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
                   textAlign: "center", padding: 60, color: palette.muted,
                   fontFamily: "'Open Sans', sans-serif", fontSize: 14,
                 }}>
-                  No reservations match your filters.
+                  {state.reservations.length === 0 ? (
+                    <>
+                      <div style={{ fontSize: 40, marginBottom: 12 }}>⚓</div>
+                      <div style={{ fontSize: 16, fontWeight: 600, color: palette.dark, marginBottom: 6 }}>
+                        No reservations for {state.viewDate === "today" ? "today" : state.viewDate === "tomorrow" ? "tomorrow" : shortDayLabel(state.viewDate)} yet
+                      </div>
+                      <div style={{ fontSize: 13, lineHeight: 1.5, maxWidth: 380, margin: "0 auto" }}>
+                        Tomorrow's reservations load from Salesforce each afternoon, and today's
+                        list picks up new call-ins through the day. Try the other day, or pick a different dock.
+                      </div>
+                    </>
+                  ) : (
+                    "No reservations match your filters."
+                  )}
                 </div>
               ) : (
                 <>

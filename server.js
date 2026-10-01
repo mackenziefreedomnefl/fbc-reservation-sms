@@ -979,10 +979,28 @@ function rowToReservation(r) {
 }
 
 // --- Reservations ---
+
+// Reservation dates are stored as timestamptz; "which day" questions are
+// always answered in the club's local timezone, not UTC.
+const CLUB_TZ = "America/New_York";
+function clubDateString(offsetDays = 0) {
+  const d = new Date(Date.now() + offsetDays * 86400000);
+  return d.toLocaleDateString("en-CA", { timeZone: CLUB_TZ });
+}
+function resolveDateParam(raw) {
+  if (!raw) return null;
+  if (raw === "today") return clubDateString(0);
+  if (raw === "tomorrow") return clubDateString(1);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return null;
+}
+
 app.get("/api/reservations", requireAuth, requireFranchiseContext, async (req, res) => {
   const dockId = req.query.dock;
   if (!dockId) return res.status(400).json({ error: "Missing dock parameter" });
   if (denyIfDockOutOfScope(req, res, dockId)) return;
+  const targetDate = resolveDateParam(req.query.date);
+  if (req.query.date && !targetDate) return res.status(400).json({ error: "Invalid date parameter" });
 
   try {
     // Confirm dock belongs to active franchise
@@ -992,15 +1010,30 @@ app.get("/api/reservations", requireAuth, requireFranchiseContext, async (req, r
     );
     if (dockRows.length === 0) return res.status(404).json({ error: "Dock not found for this franchise" });
 
-    const { rows: reservations } = await db.query(
-      `SELECT * FROM reservations
-       WHERE franchise_id = $1 AND dock_id = $2
-         AND import_batch_id = (
-           SELECT MAX(id) FROM import_batches WHERE franchise_id = $1 AND dock_id = $2
-         )
-       ORDER BY reservation_date ASC NULLS LAST`,
-      [req.franchiseId, dockId]
-    );
+    // With a date: show that day's reservations from the newest batch that
+    // covers the day. Without one: legacy behavior (newest batch, any day).
+    const { rows: reservations } = targetDate
+      ? await db.query(
+          `SELECT * FROM reservations
+           WHERE franchise_id = $1 AND dock_id = $2
+             AND (reservation_date AT TIME ZONE '${CLUB_TZ}')::date = $3::date
+             AND import_batch_id = (
+               SELECT MAX(import_batch_id) FROM reservations
+               WHERE franchise_id = $1 AND dock_id = $2
+                 AND (reservation_date AT TIME ZONE '${CLUB_TZ}')::date = $3::date
+             )
+           ORDER BY reservation_date ASC NULLS LAST`,
+          [req.franchiseId, dockId, targetDate]
+        )
+      : await db.query(
+          `SELECT * FROM reservations
+           WHERE franchise_id = $1 AND dock_id = $2
+             AND import_batch_id = (
+               SELECT MAX(id) FROM import_batches WHERE franchise_id = $1 AND dock_id = $2
+             )
+           ORDER BY reservation_date ASC NULLS LAST`,
+          [req.franchiseId, dockId]
+        );
 
     const phones = [...new Set(reservations.map((r) => r.phone).filter(Boolean))];
     let messagesByPhone = {};
@@ -1045,7 +1078,7 @@ app.get("/api/reservations", requireAuth, requireFranchiseContext, async (req, r
       homeFranchises: visitingByPhone[r.phone] || [],
     }));
 
-    res.json({ reservations: enriched, dock: dockId });
+    res.json({ reservations: enriched, dock: dockId, date: targetDate });
   } catch (err) {
     console.error("GET /api/reservations error:", err);
     res.status(500).json({ error: "Database error" });
@@ -1068,25 +1101,65 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
     return res.status(500).json({ error: "Database error" });
   }
 
-  const { data } = req.body;
+  const { data, merge } = req.body;
   if (!Array.isArray(data) || data.length === 0) {
     return res.status(400).json({ error: "No reservation data provided" });
   }
 
   try {
     const result = await db.withTx(async (c) => {
-      const { rows: [batch] } = await c.query(
-        `INSERT INTO import_batches (franchise_id, dock_id, row_count, uploaded_by_user_id)
-         VALUES ($1,$2,$3,$4) RETURNING id`,
-        [req.franchiseId, dockId, data.length, req.session.userId]
-      );
-      const batchId = batch.id;
       const prefix = dockId.toUpperCase().slice(0, 3);
+
+      // Merge mode: all payload rows are for one club-local day. If a batch
+      // already covers that day for this dock, fold the payload into it —
+      // update details on matched source_ids, add new ones, and mark rows
+      // that vanished from Salesforce as cancelled. Statuses, sent flags and
+      // SMS history on existing rows are never reset.
+      let batchId = null;
+      let targetDate = null;
+      if (merge) {
+        const firstDated = data.find((r) => r.date);
+        if (firstDated) {
+          targetDate = new Date(firstDated.date).toLocaleDateString("en-CA", { timeZone: CLUB_TZ });
+          const { rows: [existing] } = await c.query(
+            `SELECT MAX(import_batch_id) AS id FROM reservations
+             WHERE franchise_id = $1 AND dock_id = $2
+               AND (reservation_date AT TIME ZONE '${CLUB_TZ}')::date = $3::date`,
+            [req.franchiseId, dockId, targetDate]
+          );
+          batchId = (existing && existing.id) || null;
+        }
+      }
+
+      const merging = !!batchId;
+      let existingBySource = new Map();
+      let existingCount = 0;
+      if (merging) {
+        const { rows: existingRows } = await c.query(
+          `SELECT id, source_id, status, time_updated, pending_time_change
+           FROM reservations WHERE franchise_id = $1 AND import_batch_id = $2`,
+          [req.franchiseId, batchId]
+        );
+        existingCount = existingRows.length;
+        for (const row of existingRows) {
+          if (row.source_id) existingBySource.set(row.source_id, row);
+        }
+      } else {
+        const { rows: [batch] } = await c.query(
+          `INSERT INTO import_batches (franchise_id, dock_id, row_count, uploaded_by_user_id)
+           VALUES ($1,$2,$3,$4) RETURNING id`,
+          [req.franchiseId, dockId, data.length, req.session.userId]
+        );
+        batchId = batch.id;
+      }
+
+      let added = 0, updated = 0, removed = 0;
+      const seenSourceIds = new Set();
 
       for (let i = 0; i < data.length; i++) {
         const r = data[i];
         const sourceId = r.id || `${prefix}-${String(i + 1).padStart(3, "0")}`;
-        const reservationId = `F${req.franchiseId}-${prefix}-B${batchId}-${String(i + 1).padStart(3, "0")}`;
+        seenSourceIds.add(sourceId);
         const normalizedPhone = r.phone ? normalizePhone(r.phone) : "";
 
         // If this member has been flagged do-not-contact, mark the new
@@ -1101,25 +1174,74 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
           skipReminder = !!(dncRows[0] && dncRows[0].do_not_contact);
         }
 
+        const match = merging ? existingBySource.get(sourceId) : null;
+        if (match) {
+          // A time the member changed by SMS (applied or awaiting approval)
+          // beats whatever Salesforce still says — don't stomp it.
+          const keepDate = match.time_updated || match.pending_time_change;
+          await c.query(
+            `UPDATE reservations SET
+               phone = $1, name = $2, email = $3, service = $4,
+               reservation_date = CASE WHEN $5::boolean THEN reservation_date ELSE $6::timestamptz END,
+               return_time = $7, guests = $8, notes = $9,
+               member_mobile = $10, contact_mobile = $11, contact_home_phone = $12,
+               contact_phone = $13, location_info = $14
+             WHERE id = $15 AND franchise_id = $16`,
+            [
+              normalizedPhone, r.name || match.name || "Guest", r.email || "", r.service || "Reservation",
+              !!keepDate, r.date || null, r.endTime || null, r.guests || 1, r.notes || "",
+              r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
+              match.id, req.franchiseId,
+            ]
+          );
+          updated++;
+        } else {
+          const seq = merging ? existingCount + added + 1 : i + 1;
+          const reservationId = `F${req.franchiseId}-${prefix}-B${batchId}-${String(seq).padStart(3, "0")}`;
+          await c.query(
+            `INSERT INTO reservations
+             (id, franchise_id, import_batch_id, source_id, dock_id, phone, name, email, service,
+              reservation_date, return_time, guests, status, channel, notes,
+              member_mobile, contact_mobile, contact_home_phone, contact_phone, location_info,
+              skip_reminder)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+            [
+              reservationId, req.franchiseId, batchId, sourceId, dockId, normalizedPhone,
+              r.name || `Guest ${i + 1}`, r.email || "", r.service || "Reservation",
+              r.date || null, r.endTime || null, r.guests || 1, r.status || "unconfirmed", r.channel || "sms", r.notes || "",
+              r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
+              skipReminder,
+            ]
+          );
+          added++;
+        }
+      }
+
+      if (merging) {
+        // Rows that came from Salesforce but no longer appear in its feed
+        // were cancelled or moved off this day — reflect that.
+        for (const [sourceId, row] of existingBySource) {
+          if (seenSourceIds.has(sourceId)) continue;
+          if (!/^[a-zA-Z0-9]{15,18}$/.test(sourceId)) continue;
+          if (row.status === "cancelled") continue;
+          await c.query(
+            `UPDATE reservations SET status = 'cancelled' WHERE id = $1 AND franchise_id = $2`,
+            [row.id, req.franchiseId]
+          );
+          removed++;
+        }
         await c.query(
-          `INSERT INTO reservations
-           (id, franchise_id, import_batch_id, source_id, dock_id, phone, name, email, service,
-            reservation_date, return_time, guests, status, channel, notes,
-            member_mobile, contact_mobile, contact_home_phone, contact_phone, location_info,
-            skip_reminder)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
-          [
-            reservationId, req.franchiseId, batchId, sourceId, dockId, normalizedPhone,
-            r.name || `Guest ${i + 1}`, r.email || "", r.service || "Reservation",
-            r.date || null, r.endTime || null, r.guests || 1, r.status || "unconfirmed", r.channel || "sms", r.notes || "",
-            r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
-            skipReminder,
-          ]
+          `UPDATE import_batches SET row_count = (
+             SELECT COUNT(*) FROM reservations WHERE import_batch_id = $1
+           ) WHERE id = $1 AND franchise_id = $2`,
+          [batchId, req.franchiseId]
         );
       }
-      return { batchId, count: data.length };
+
+      return { batchId, count: data.length, merged: merging, added, updated, removed };
     });
-    res.json({ success: true, count: result.count, batchId: result.batchId, dock: dockId });
+    res.json({ success: true, count: result.count, batchId: result.batchId, dock: dockId,
+               merged: result.merged, added: result.added, updated: result.updated, removed: result.removed });
   } catch (err) {
     console.error("Import error:", err);
     res.status(500).json({ error: "Import failed", details: err.message });
