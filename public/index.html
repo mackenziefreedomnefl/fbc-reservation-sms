@@ -794,33 +794,73 @@ function StatusBadge({ status }) {
   );
 }
 
-function StatCard({ label, value, sub, color, icon }) {
+function Scoreboard({ items }) {
   return (
     <div style={{
-      background: palette.card, borderRadius: 16, padding: "22px 24px",
-      boxShadow: palette.shadow, border: `1px solid ${palette.border}`,
-      flex: 1, minWidth: 160, transition: "box-shadow 0.2s",
-      position: "relative", overflow: "hidden",
+      display: "flex", alignItems: "center",
+      background: palette.card, borderRadius: 12,
+      border: `1px solid ${palette.border}`, boxShadow: palette.shadow,
+      padding: "10px 16px", marginBottom: 14,
+      overflowX: "auto", WebkitOverflowScrolling: "touch",
     }}>
-      <div style={{
-        position: "absolute", top: -8, right: -8, width: 56, height: 56,
-        borderRadius: "50%", background: color || palette.accentLight, opacity: 0.2,
-      }} />
-      <div style={{
-        fontSize: 11, color: palette.muted, fontWeight: 600, letterSpacing: 1,
-        textTransform: "uppercase", fontFamily: "'Open Sans', sans-serif",
-        marginBottom: 8,
-      }}>{label}</div>
-      <div style={{
-        fontSize: 32, fontWeight: 700, color: palette.dark,
-        fontFamily: "'Montserrat', sans-serif", lineHeight: 1,
-      }}>{value}</div>
-      {sub && (
-        <div style={{
-          fontSize: 12, color: palette.muted, marginTop: 6,
-          fontFamily: "'Open Sans', sans-serif",
-        }}>{sub}</div>
-      )}
+      {items.map((it, i) => (
+        <React.Fragment key={it.label}>
+          {i > 0 && (
+            <div style={{ width: 1, alignSelf: "stretch", background: palette.border, margin: "0 14px", flexShrink: 0 }} />
+          )}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 7, whiteSpace: "nowrap" }}>
+            <span style={{
+              fontSize: 20, fontWeight: 700, color: it.color || palette.dark,
+              fontFamily: "'Montserrat', sans-serif", lineHeight: 1,
+            }}>{it.value}</span>
+            <span style={{
+              fontSize: 11, fontWeight: 600, color: palette.muted,
+              textTransform: "uppercase", letterSpacing: 0.5,
+              fontFamily: "'Open Sans', sans-serif",
+            }}>{it.label}</span>
+            {it.sub && (
+              <span style={{ fontSize: 11, color: palette.muted, fontFamily: "'Open Sans', sans-serif" }}>{it.sub}</span>
+            )}
+          </div>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+const DOCK_SHORT_NAMES = {
+  "jax-beach": "Jax Beach",
+  "julington-east": "Julington East",
+  "julington-west": "Julington West",
+  "camachee-cove": "Camachee Cove",
+  "shipyard": "Shipyard",
+};
+
+function DockPills({ current, onSwitch }) {
+  return (
+    <div style={{
+      display: "flex", gap: 6, flex: 1, minWidth: 0,
+      overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 2,
+    }}>
+      {DOCKS.map((dock) => {
+        const active = dock.id === current;
+        return (
+          <button
+            key={dock.id}
+            onClick={() => { if (!active) onSwitch(dock.id); }}
+            style={{
+              padding: "8px 14px", borderRadius: 20, whiteSpace: "nowrap", flexShrink: 0,
+              border: `1.5px solid ${active ? palette.dark : palette.border}`,
+              background: active ? palette.dark : palette.card,
+              color: active ? "#fff" : palette.muted,
+              fontSize: 12, fontWeight: 600, cursor: active ? "default" : "pointer",
+              fontFamily: "'Open Sans', sans-serif", transition: "all 0.15s",
+            }}
+          >
+            {active ? "⚓ " : ""}{DOCK_SHORT_NAMES[dock.id] || dock.name}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -4489,26 +4529,35 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
             {me && me.user && (me.user.role === "super_admin" || me.user.role === "franchise_admin") && (
               <DatePullControl onLoaded={() => dispatch({ type: "REFRESH" })} />
             )}
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+            {/* Dock switcher + refresh */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              {!isDockScoped ? (
+                <DockPills
+                  current={state.currentDock}
+                  onSwitch={(id) => dispatch({ type: "SET_DOCK", payload: id })}
+                />
+              ) : (
+                <div style={{ flex: 1 }} />
+              )}
               <button
                 onClick={() => { dispatch({ type: "REFRESH" }); dispatch({ type: "SHOW_TOAST", payload: "Refreshed" }); }}
                 title="Reload the latest reservations and replies"
                 style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  padding: "8px 14px", borderRadius: 9, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+                  padding: "8px 14px", borderRadius: 20, cursor: "pointer",
                   border: `1.5px solid ${palette.border}`, background: palette.card,
-                  color: palette.dark, fontSize: 13, fontWeight: 600,
+                  color: palette.dark, fontSize: 12, fontWeight: 600,
                   fontFamily: "'Open Sans', sans-serif",
                 }}
-              ><span style={{ fontSize: 15 }}>↻</span> Refresh</button>
+              ><span style={{ fontSize: 14 }}>↻</span> Refresh</button>
             </div>
-            {/* Stats */}
-            <div style={{ display: "flex", gap: 14, marginBottom: 28, flexWrap: "wrap" }}>
-              <StatCard label="Total" value={counts.all} sub="Upcoming reservations" color={palette.blueLight} />
-              <StatCard label="Confirmed" value={counts.confirmed} sub={`${counts.all > 0 ? ((counts.confirmed / counts.all) * 100).toFixed(0) : 0}% confirmed`} color={palette.greenLight} />
-              <StatCard label="Pending" value={counts.pending} sub="Awaiting response" color={palette.amberLight} />
-              <StatCard label="Unsent" value={unsent} sub="Messages not sent" color={palette.redLight} />
-            </div>
+            {/* Scoreboard */}
+            <Scoreboard items={[
+              { label: "Total", value: counts.all, color: palette.dark },
+              { label: "Confirmed", value: counts.confirmed, sub: counts.all > 0 ? `${((counts.confirmed / counts.all) * 100).toFixed(0)}%` : null, color: palette.green },
+              { label: "Pending", value: counts.pending, color: palette.amber },
+              { label: "Unsent", value: unsent, color: palette.red },
+            ]} />
 
             {/* Controls */}
             <div style={{
