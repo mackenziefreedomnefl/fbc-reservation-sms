@@ -1194,11 +1194,13 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
 // Reservations auto-load for tomorrow each afternoon; this lets an admin pull
 // any date on demand (the Mac worker runs the Salesforce pull, ~1-2 min).
 function DatePullControl({ onLoaded }) {
-  const tomorrow = () => {
-    const d = new Date(Date.now() + 86400000);
+  // Today and tomorrow already have scoreboard pills — default the picker to
+  // the first day beyond them, since this control exists to work ahead.
+  const dayAfterTomorrow = () => {
+    const d = new Date(Date.now() + 2 * 86400000);
     return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
   };
-  const [date, setDate] = useState(tomorrow());
+  const [date, setDate] = useState(dayAfterTomorrow());
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -4561,7 +4563,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
           </div>
         ) : state.view === "reservations" ? (
           <>
-            {me && me.user && (me.user.role === "super_admin" || me.user.role === "franchise_admin") && (
+            {me && me.user && (
               <DatePullControl onLoaded={(date) => {
                 const sentinel = date === clubDateStr(0) ? "today" : date === clubDateStr(1) ? "tomorrow" : date;
                 dispatch({ type: "SET_VIEW_DATE", payload: sentinel });

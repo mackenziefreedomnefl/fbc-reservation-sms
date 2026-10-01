@@ -2385,11 +2385,11 @@ app.get("/api/sf-sync/pending", requireOriginSecret, async (req, res) => {
   }
 });
 
-// --- On-demand date pull (admin requests a date; Mac worker fulfils it) ---
+// --- On-demand date pull (any staff requests a date; Mac worker fulfils it) ---
+// Open to managers and dock phones too so docks can send confirmations
+// further ahead than tomorrow. Duplicate requests per date collapse below,
+// and merge-mode imports mean a re-pull never resets statuses.
 app.post("/api/reservations/pull", requireAuth, requireFranchiseContext, async (req, res) => {
-  if (req.session.role !== "super_admin" && req.session.role !== "franchise_admin") {
-    return res.status(403).json({ error: "Only admins can pull a different date" });
-  }
   const date = String(req.body.date || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Date must be YYYY-MM-DD" });
   try {
