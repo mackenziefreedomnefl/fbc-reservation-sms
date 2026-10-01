@@ -808,11 +808,12 @@ function shortDayLabel(dateStr) {
 
 function DaySwitch({ viewDate, onChange }) {
   const isCustom = viewDate !== "today" && viewDate !== "tomorrow";
+  const futureDates = [];
+  for (let i = 2; i <= 15; i++) futureDates.push(clubDateStr(i));
   const opts = [
     { key: "today", label: "Today" },
     { key: "tomorrow", label: "Tomorrow" },
   ];
-  if (isCustom) opts.push({ key: viewDate, label: shortDayLabel(viewDate) });
   return (
     <div style={{ display: "flex", gap: 0, flexShrink: 0, border: `1.5px solid ${palette.border}`, borderRadius: 9, overflow: "hidden" }}>
       {opts.map((o) => {
@@ -821,7 +822,7 @@ function DaySwitch({ viewDate, onChange }) {
           <button
             key={o.key}
             onClick={() => { if (!active) onChange(o.key); }}
-            title={o.key === "today" ? shortDayLabel(clubDateStr(0)) : o.key === "tomorrow" ? shortDayLabel(clubDateStr(1)) : o.key}
+            title={o.key === "today" ? shortDayLabel(clubDateStr(0)) : shortDayLabel(clubDateStr(1))}
             style={{
               padding: "7px 13px", border: "none", whiteSpace: "nowrap",
               background: active ? palette.dark : palette.card,
@@ -832,16 +833,35 @@ function DaySwitch({ viewDate, onChange }) {
           >{o.label}</button>
         );
       })}
+      {/* Days beyond tomorrow: picking one loads that day's data automatically. */}
+      <select
+        value={isCustom ? viewDate : ""}
+        onChange={(e) => { if (e.target.value) onChange(e.target.value); }}
+        style={{
+          border: "none", outline: "none", borderRadius: 0,
+          background: isCustom ? palette.dark : palette.card,
+          color: isCustom ? "#fff" : palette.muted,
+          fontSize: 12, fontWeight: 700, padding: "7px 10px",
+          fontFamily: "'Open Sans', sans-serif", cursor: "pointer",
+          WebkitAppearance: "none", MozAppearance: "none", appearance: "none",
+        }}
+      >
+        <option value="" disabled>{isCustom ? "" : "More ▾"}</option>
+        {futureDates.map((d) => (
+          <option key={d} value={d}>{shortDayLabel(d)}</option>
+        ))}
+      </select>
     </div>
   );
 }
 
-function Scoreboard({ items, leading }) {
+function Scoreboard({ items, leading, accent }) {
   return (
     <div style={{
       display: "flex", alignItems: "center",
       background: palette.card, borderRadius: 12,
       border: `1px solid ${palette.border}`, boxShadow: palette.shadow,
+      borderTop: `3px solid ${accent || palette.dark}`,
       padding: "10px 16px", marginBottom: 14,
       overflowX: "auto", WebkitOverflowScrolling: "touch",
     }}>
@@ -882,6 +902,16 @@ const DOCK_SHORT_NAMES = {
   "shipyard": "Shipyard",
 };
 
+// Each location gets its own color so screens are visibly different when
+// you switch docks (active pill, header chip, scoreboard accent).
+const DOCK_COLORS = {
+  "jax-beach": "#0B2545",       // navy
+  "julington-east": "#1B6E8C",  // teal
+  "julington-west": "#3A7D44",  // green
+  "camachee-cove": "#C06014",   // burnt orange
+  "shipyard": "#6A4C93",        // purple
+};
+
 function DockPills({ current, onSwitch }) {
   return (
     <div style={{
@@ -890,14 +920,15 @@ function DockPills({ current, onSwitch }) {
     }}>
       {DOCKS.map((dock) => {
         const active = dock.id === current;
+        const color = DOCK_COLORS[dock.id] || palette.dark;
         return (
           <button
             key={dock.id}
             onClick={() => { if (!active) onSwitch(dock.id); }}
             style={{
               padding: "8px 14px", borderRadius: 20, whiteSpace: "nowrap", flexShrink: 0,
-              border: `1.5px solid ${active ? palette.dark : palette.border}`,
-              background: active ? palette.dark : palette.card,
+              border: `1.5px solid ${active ? color : palette.border}`,
+              background: active ? color : palette.card,
               color: active ? "#fff" : palette.muted,
               fontSize: 12, fontWeight: 600, cursor: active ? "default" : "pointer",
               fontFamily: "'Open Sans', sans-serif", transition: "all 0.15s",
@@ -1190,74 +1221,6 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
   );
 }
 
-// ─── On-demand date pull (admins) ────────────────────────────────
-// Reservations auto-load for tomorrow each afternoon; this lets an admin pull
-// any date on demand (the Mac worker runs the Salesforce pull, ~1-2 min).
-function DatePullControl({ onLoaded }) {
-  // Today and tomorrow already have scoreboard pills — default the picker to
-  // the first day beyond them, since this control exists to work ahead.
-  const dayAfterTomorrow = () => {
-    const d = new Date(Date.now() + 2 * 86400000);
-    return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
-  };
-  const [date, setDate] = useState(dayAfterTomorrow());
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-
-  const load = async () => {
-    if (!date) return;
-    setBusy(true); setMsg("Requesting…");
-    try {
-      const r = await api.pullDate(date);
-      if (!r || !r.success) { setMsg((r && r.error) || "Couldn't request that date."); setBusy(false); return; }
-      setMsg("Pulling from Salesforce…");
-      const started = Date.now();
-      const poll = async () => {
-        try {
-          const s = await api.pullStatus();
-          const l = s.latest;
-          if (l && l.target_date === date && (l.status === "done" || l.status === "error")) {
-            if (l.status === "done") {
-              setMsg(`Loaded ${l.result_count != null ? l.result_count + " " : ""}reservation(s) for ${date}.`);
-              if (onLoaded) onLoaded(date);
-            } else {
-              setMsg("Pull failed — try again in a moment.");
-            }
-            setBusy(false); return;
-          }
-        } catch (_) {}
-        if (Date.now() - started > 180000) { setMsg("Still working — give it another minute, then refresh."); setBusy(false); return; }
-        setTimeout(poll, 4000);
-      };
-      setTimeout(poll, 4000);
-    } catch (_) { setMsg("Network error."); setBusy(false); }
-  };
-
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-      background: palette.card, border: `1px solid ${palette.border}`,
-      borderRadius: 12, padding: "12px 16px", marginBottom: 20,
-    }}>
-      <span style={{ fontSize: 13, fontWeight: 600, color: palette.dark, fontFamily: "'Open Sans', sans-serif" }}>
-        Load reservations for
-      </span>
-      <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-        style={{
-          padding: "8px 10px", borderRadius: 9, border: `1.5px solid ${palette.border}`,
-          fontSize: 13, fontFamily: "'Open Sans', sans-serif", color: palette.dark,
-        }} />
-      <button onClick={load} disabled={busy}
-        style={{
-          padding: "8px 16px", borderRadius: 9, border: "none", color: "#fff",
-          background: busy ? palette.border : palette.accent,
-          fontSize: 13, fontWeight: 700, cursor: busy ? "default" : "pointer",
-          fontFamily: "'Open Sans', sans-serif",
-        }}>{busy ? "Loading…" : "Load"}</button>
-      {msg && <span style={{ fontSize: 12, color: palette.muted, fontFamily: "'Open Sans', sans-serif" }}>{msg}</span>}
-    </div>
-  );
-}
 
 // ─── Confirmation Message Editor ─────────────────────────────────
 function MessageTemplateEditor() {
@@ -4124,6 +4087,43 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
     return () => { active = false; clearInterval(interval); };
   }, [state.currentDock, state.viewDate, me?.franchise?.twilioConfigured]);
 
+  // Picking a day beyond tomorrow auto-loads it: queue a Salesforce pull and
+  // show progress while the Mac worker runs it. The 5s reservation poll above
+  // picks up the rows as soon as they land. One pull per date per session —
+  // merge-mode imports make a re-pull harmless but there's no need to spam.
+  const [pullMsg, setPullMsg] = useState("");
+  const pulledDatesRef = useRef(new Set());
+  useEffect(() => {
+    const d = state.viewDate;
+    if (!api.isLive() || d === "today" || d === "tomorrow") { setPullMsg(""); return; }
+    if (pulledDatesRef.current.has(d)) { setPullMsg(""); return; }
+    pulledDatesRef.current.add(d);
+    let active = true;
+    (async () => {
+      try {
+        setPullMsg(`Loading ${shortDayLabel(d)} from Salesforce…`);
+        const r = await api.pullDate(d);
+        if (!r || !r.success) { if (active) setPullMsg("Couldn't load that day — try again in a minute."); return; }
+        const started = Date.now();
+        const check = async () => {
+          if (!active) return;
+          try {
+            const s = await api.pullStatus();
+            const l = s.latest;
+            if (l && l.target_date === d && (l.status === "done" || l.status === "error")) {
+              setPullMsg(l.status === "done" ? "" : "Couldn't load that day — try again in a minute.");
+              return;
+            }
+          } catch {}
+          if (Date.now() - started > 180000) { setPullMsg(""); return; }
+          setTimeout(check, 4000);
+        };
+        setTimeout(check, 4000);
+      } catch { if (active) setPullMsg(""); }
+    })();
+    return () => { active = false; };
+  }, [state.viewDate]);
+
   const filtered = state.reservations
     .filter((r) => state.filter === "all" || r.status === state.filter)
     .filter((r) =>
@@ -4430,26 +4430,27 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
                 onClick={() => dispatch({ type: "SWITCH_DOCK" })}
                 style={{
                   padding: "10px 18px", borderRadius: 10,
-                  border: `1.5px solid ${palette.border}`,
-                  background: "transparent",
-                  color: palette.muted,
+                  border: `1.5px solid ${DOCK_COLORS[state.currentDock] || palette.border}`,
+                  background: DOCK_COLORS[state.currentDock] || "transparent",
+                  color: state.currentDock ? "#fff" : palette.muted,
                   fontSize: 12, fontWeight: 600, cursor: "pointer",
                   fontFamily: "'Open Sans', sans-serif", transition: "all 0.15s",
                   display: "flex", alignItems: "center", gap: 6,
                 }}
               >
-                <span style={{ fontSize: 13 }}>⚓</span> {DOCKS.find((d) => d.id === state.currentDock)?.name || "Switch Dock"}
+                <span style={{ fontSize: 13 }}>⚓</span> {DOCK_SHORT_NAMES[state.currentDock] || DOCKS.find((d) => d.id === state.currentDock)?.name || "Switch Dock"}
               </button>
             )}
             {state.currentDock && isDockScoped && (
               <div style={{
                 padding: "10px 14px", borderRadius: 10,
-                border: `1.5px solid ${palette.border}`,
-                color: palette.muted, fontSize: 12, fontWeight: 600,
+                border: `1.5px solid ${DOCK_COLORS[state.currentDock] || palette.border}`,
+                background: DOCK_COLORS[state.currentDock] || "transparent",
+                color: "#fff", fontSize: 12, fontWeight: 600,
                 fontFamily: "'Open Sans', sans-serif",
                 display: "flex", alignItems: "center", gap: 6,
               }}>
-                <span style={{ fontSize: 13 }}>⚓</span> {DOCKS.find((d) => d.id === state.currentDock)?.name || ""}
+                <span style={{ fontSize: 13 }}>⚓</span> {DOCK_SHORT_NAMES[state.currentDock] || DOCKS.find((d) => d.id === state.currentDock)?.name || ""}
               </div>
             )}
             {me && me.user && me.user.role === "super_admin" && (
@@ -4563,12 +4564,6 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
           </div>
         ) : state.view === "reservations" ? (
           <>
-            {me && me.user && (
-              <DatePullControl onLoaded={(date) => {
-                const sentinel = date === clubDateStr(0) ? "today" : date === clubDateStr(1) ? "tomorrow" : date;
-                dispatch({ type: "SET_VIEW_DATE", payload: sentinel });
-              }} />
-            )}
             {/* Dock switcher + refresh */}
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
               {!isDockScoped ? (
@@ -4593,6 +4588,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
             </div>
             {/* Scoreboard */}
             <Scoreboard
+              accent={DOCK_COLORS[state.currentDock] || palette.dark}
               leading={
                 <DaySwitch
                   viewDate={state.viewDate}
@@ -4605,6 +4601,12 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
               { label: "Pending", value: counts.pending, color: palette.amber },
               { label: "Unsent", value: unsent, color: palette.red },
             ]} />
+            {pullMsg && (
+              <div style={{
+                fontSize: 12, color: palette.muted, margin: "-6px 0 12px 4px",
+                fontFamily: "'Open Sans', sans-serif",
+              }}>{pullMsg}</div>
+            )}
 
             {/* Controls */}
             <div style={{
@@ -5775,9 +5777,10 @@ function App() {
 
   const handleLogout = async () => {
     try { await api.logout(); } catch {}
-    setMe(null);
-    setSession(null);
-    setAuthState("anon");
+    // Sign-in happens at the Cloudflare layer (hub Google session or dock
+    // code), not in this app — its old login screen is dead. /dock-logout
+    // clears a dock-code cookie if present and lands on the code page.
+    window.location.href = "/dock-logout";
   };
 
   if (authState === "checking") {
