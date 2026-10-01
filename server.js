@@ -2047,6 +2047,15 @@ async function parseAndApplyReply(inboundText, reservation) {
   const timeMatch = replyLower.match(
     /(?:time|change.*time|move.*to|reschedule.*to|change.*to|switch.*to|make it|new time)?\s*(\d{1,2}):?(\d{2})?\s*(am|pm)/i
   );
+  // Times WITHOUT am/pm only count with a colon ("5:00") or arrival context
+  // ("coming at 5", "eta 5") — so "2 guests" never parses as 2 o'clock.
+  // Meridiem inference: 1–6 reads as afternoon, 7–12 as morning/noon.
+  const bareTime = !timeMatch && (
+    replyLower.match(/(\d{1,2}):(\d{2})(?!\s*(?:am|pm))/) ||
+    replyLower.match(/(?:arriv\w+|coming|be there|eta|around|make it|move to|updat\w+(?: to)?|\bat)\s+(\d{1,2})(?::(\d{2}))?\b/)
+  );
+  const namedTime = /\bnoon\b/.test(replyLower) ? { h: 12, m: 0 }
+    : /\bmidnight\b/.test(replyLower) ? { h: 0, m: 0 } : null;
   const handoffOrInquiry = /(human|real person|talk to|speak to|chat with|customer service|live person|representative|\bagent\b|\bmanager\b|do you have|any boats|boats? avail|any avail|any open|any slot|any free|reservation for|reserve a|book (a|another)|want to book|new booking)/;
 
   if (!reservation) {
@@ -2098,6 +2107,13 @@ async function parseAndApplyReply(inboundText, reservation) {
     if (ampm && ampm.toLowerCase() === "pm" && h < 12) h += 12;
     if (ampm && ampm.toLowerCase() === "am" && h === 12) h = 0;
     return flagTimeChangeRequest(reservation, h, m);
+  }
+  if (namedTime) return flagTimeChangeRequest(reservation, namedTime.h, namedTime.m);
+  if (bareTime) {
+    let h = parseInt(bareTime[1]);
+    const m = parseInt(bareTime[2] || "0");
+    if (h >= 1 && h <= 6) h += 12; // "5" on a boat dock means 5 PM
+    if (h >= 0 && h <= 23) return flagTimeChangeRequest(reservation, h, m);
   }
   if (handoffOrInquiry.test(replyLower) || inboundText.includes("?")) {
     return HANDOFF_RESPONSE;
