@@ -974,6 +974,7 @@ function rowToReservation(r) {
     skipReminder: !!r.skip_reminder,
     dock: r.dock_id,
     sourceId: r.source_id,
+    sfStatus: r.sf_status || "",
     franchiseId: r.franchise_id,
   };
 }
@@ -1192,12 +1193,14 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
                reservation_date = CASE WHEN $5::boolean THEN reservation_date ELSE $6::timestamptz END,
                return_time = $7, guests = $8, notes = $9,
                member_mobile = $10, contact_mobile = $11, contact_home_phone = $12,
-               contact_phone = $13, location_info = $14
-             WHERE id = $15 AND franchise_id = $16`,
+               contact_phone = $13, location_info = $14,
+               sf_status = COALESCE($15, sf_status)
+             WHERE id = $16 AND franchise_id = $17`,
             [
               normalizedPhone, r.name || match.name || "Guest", r.email || "", r.service || "Reservation",
               !!keepDate, r.date || null, r.endTime || null, r.guests || 1, r.notes || "",
               r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
+              r.sfStatus || null,
               match.id, req.franchiseId,
             ]
           );
@@ -1212,19 +1215,24 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
         } else {
           const seq = merging ? existingCount + added + 1 : i + 1;
           const reservationId = `F${req.franchiseId}-${prefix}-B${batchId}-${String(seq).padStart(3, "0")}`;
+          // A reservation that APPEARS mid-day for today is a same-day
+          // call-in — they just booked it, so it's confirmed by definition.
+          // (Fresh imports of a whole day keep the normal confirm flow.)
+          const sameDayCallIn = merging && targetDate === clubDateString(0);
           await c.query(
             `INSERT INTO reservations
              (id, franchise_id, import_batch_id, source_id, dock_id, phone, name, email, service,
               reservation_date, return_time, guests, status, channel, notes,
               member_mobile, contact_mobile, contact_home_phone, contact_phone, location_info,
-              skip_reminder)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+              skip_reminder, sf_status)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
             [
               reservationId, req.franchiseId, batchId, sourceId, dockId, normalizedPhone,
               r.name || `Guest ${i + 1}`, r.email || "", r.service || "Reservation",
-              r.date || null, r.endTime || null, r.guests || 1, r.status || "unconfirmed", r.channel || "sms", r.notes || "",
+              r.date || null, r.endTime || null, r.guests || 1,
+              sameDayCallIn ? "confirmed" : (r.status || "unconfirmed"), r.channel || "sms", r.notes || "",
               r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
-              skipReminder,
+              skipReminder, r.sfStatus || null,
             ]
           );
           added++;

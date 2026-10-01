@@ -797,6 +797,35 @@ function StatusBadge({ status }) {
   );
 }
 
+// Salesforce trip state — a second pill beside the confirmation status.
+// "Late start" / "Overdue return" are derived from the booked times; plain
+// Scheduled shows nothing (that's the normal case, no need for clutter).
+function TripBadge({ res }) {
+  const sf = res.sfStatus || "";
+  const now = Date.now();
+  const toMs = (v) => (v instanceof Date ? v.getTime() : v ? new Date(v).getTime() : null);
+  const start = toMs(res.date);
+  const end = toMs(res.endTime);
+  let label = null, color = null, bg = null;
+  if (sf === "On The Water") {
+    if (end && now > end + 15 * 60000) { label = "⚠ OVERDUE RETURN"; color = "#C0392B"; bg = "#FCE8EC"; }
+    else { label = "🌊 ON THE WATER"; color = "#1B6E8C"; bg = "#E3F0F5"; }
+  } else if (sf === "Completed") {
+    label = "BACK IN"; color = palette.muted; bg = "#EEF1F5";
+  } else if (sf === "Scheduled" && res.status !== "cancelled" &&
+             start && now > start + 20 * 60000 && now - start < 12 * 3600000) {
+    label = "⏱ LATE START"; color = palette.amber; bg = palette.amberLight;
+  }
+  if (!label) return null;
+  return (
+    <span style={{
+      fontSize: 11, padding: "3px 8px", borderRadius: 6,
+      background: bg, color, fontWeight: 700, whiteSpace: "nowrap",
+      fontFamily: "'Open Sans', sans-serif",
+    }}>{label}</span>
+  );
+}
+
 function clubDateStr(offsetDays) {
   return new Date(Date.now() + offsetDays * 86400000)
     .toLocaleDateString("en-CA", { timeZone: "America/New_York" });
@@ -1124,6 +1153,7 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
               border: `1px solid ${palette.amber}40`,
             }}>⏰ TIME CHANGE</span>
           )}
+          <TripBadge res={res} />
           <StatusBadge status={res.status} />
         </div>
       </div>
@@ -1673,6 +1703,7 @@ function SmsDrawer({ reservation, dispatch }) {
           </div>
           <div style={{ fontSize: 11, color: palette.muted, fontFamily: "'Open Sans', sans-serif" }}>{res.phone || "No phone number"}</div>
         </div>
+        <TripBadge res={res} />
         <StatusBadge status={res.status} />
       </div>
 
