@@ -937,11 +937,20 @@ async function findHomeFranchises(activeFranchiseId, phone) {
 async function findReservationByPhoneInFranchise(franchiseId, phone) {
   const tail = last10(phone);
   if (!tail || !franchiseId) return null;
+  // A reply belongs to the member's ACTIVE reservation: today's or the
+  // soonest upcoming one (club-local days). Only when nothing is upcoming
+  // does it fall back to their most recent past reservation. (Plain
+  // "latest date first" routed replies to next week's trip instead of
+  // today's when a member had both.)
   const { rows } = await db.query(
     `SELECT * FROM reservations
      WHERE franchise_id = $1
        AND RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $2
-     ORDER BY reservation_date DESC NULLS LAST, created_at DESC
+     ORDER BY
+       ((reservation_date AT TIME ZONE '${CLUB_TZ}')::date >= (NOW() AT TIME ZONE '${CLUB_TZ}')::date) DESC NULLS LAST,
+       CASE WHEN (reservation_date AT TIME ZONE '${CLUB_TZ}')::date >= (NOW() AT TIME ZONE '${CLUB_TZ}')::date
+            THEN reservation_date END ASC,
+       reservation_date DESC NULLS LAST, created_at DESC
      LIMIT 1`,
     [franchiseId, tail]
   );
