@@ -240,22 +240,22 @@ const api = {
     return res.json();
   },
 
-  async sendSms(reservationId, customBody, dockId) {
+  async sendSms(reservationId, customBody, dockId, confirmation) {
     const res = await fetch(`${API_BASE}/api/sms/send/${reservationId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ ...(customBody ? { customBody } : {}), dock: dockId }),
+      body: JSON.stringify({ ...(customBody ? { customBody } : {}), dock: dockId, confirmation: confirmation !== false }),
     });
     return res.json();
   },
 
-  async sendBulk(ids, dockId) {
+  async sendBulk(ids, dockId, body, confirmation) {
     const res = await fetch(`${API_BASE}/api/sms/send-bulk`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ ids, dock: dockId }),
+      body: JSON.stringify({ ids, dock: dockId, ...(body ? { body } : {}), confirmation: confirmation !== false }),
     });
     return res.json();
   },
@@ -826,6 +826,19 @@ function TripBadge({ res }) {
   );
 }
 
+// Same-day call-in tag — booked today for today, auto-confirmed on import.
+function SameDayBadge({ res }) {
+  if (!res.sameDay) return null;
+  return (
+    <span title="Booked same-day — auto-confirmed, no confirmation text needed" style={{
+      fontSize: 11, padding: "3px 8px", borderRadius: 6,
+      background: "#E4F2E9", color: palette.green, fontWeight: 700,
+      whiteSpace: "nowrap", fontFamily: "'Open Sans', sans-serif",
+      border: `1px solid ${palette.green}40`,
+    }}>☎ SAME-DAY · AUTO ✓</span>
+  );
+}
+
 function clubDateStr(offsetDays) {
   return new Date(Date.now() + offsetDays * 86400000)
     .toLocaleDateString("en-CA", { timeZone: "America/New_York" });
@@ -1153,6 +1166,7 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
               border: `1px solid ${palette.amber}40`,
             }}>⏰ TIME CHANGE</span>
           )}
+          <SameDayBadge res={res} />
           <TripBadge res={res} />
           <StatusBadge status={res.status} />
         </div>
@@ -1418,41 +1432,82 @@ function AutomationPanel({ reservations }) {
 }
 
 // ─── SMS Compose Modal ──────────────────────────────────────────
+// Fill the confirmation template's {placeholders} for one member, mirroring
+// the server's templateValues() so the preview matches what actually sends.
+function fillTemplateFor(template, r, dockName) {
+  const d = r.date ? new Date(r.date) : null;
+  const end = r.endTime ? new Date(r.endTime) : null;
+  const dateStr = d ? d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : "";
+  const timeStr = d ? d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+  const endStr = end && !isNaN(end.getTime()) ? end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+  const vals = {
+    "{first_name}": (r.name || "there").split(" ")[0],
+    "{name}": r.name || "",
+    "{boat}": r.service || "reservation",
+    "{date}": dateStr,
+    "{time}": timeStr,
+    "{return_time}": endStr,
+    "{time_phrase}": endStr ? `from ${timeStr} to ${endStr}` : `at ${timeStr}`,
+    "{dock}": dockName || "",
+  };
+  return template.replace(/\{[a-z_]+\}/g, (tok) => (tok in vals ? vals[tok] : tok));
+}
+
 function SmsComposeModal({ compose, reservations, dockName, dispatch, onSend }) {
   const { id, mode } = compose;
   const dn = dockName ? `FBC ${dockName}` : "Freedom Boat Club";
-  // Quick-pick message presets staff can drop in before approving the send.
-  const PRESETS = [
-    { label: "Confirmation (ETA)",
-      text: `Good evening! This is the ${dn} reservation line. Please confirm your reservation for tomorrow with an ETA, or let us know if you need to cancel. Thanks!` },
-    { label: "Small craft — closed all day",
-      text: `Good evening, this is the ${dn} reservation line. Due to a small craft advisory, the docks are closed all day tomorrow and your reservation is cancelled. We're sorry for the inconvenience and hope to see you on the water soon.` },
-    { label: "Small craft — delayed opening",
-      text: `Good evening, this is the ${dn} reservation line. Due to a small craft advisory, we expect a delayed opening tomorrow. We'll follow up with timing — please hold tight before heading to the dock. Thanks for your patience!` },
-  ];
 
-  // Build default message for single or first reservation
+  // Message types: Confirmation shows the real (editable) confirmation text;
+  // the others are starting points staff can finish or rewrite; Custom is a
+  // blank page. Only Confirmation marks members as "messaged"/pending.
   const res = mode === "single" ? reservations.find((r) => r.id === id) : null;
-  const buildDefault = (r) => {
-    const dateStr = new Date(r.date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-    const timeStr = new Date(r.date).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-    const endObj = r.endTime ? new Date(r.endTime) : null;
-    const endStr = endObj && !isNaN(endObj.getTime())
-      ? endObj.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
-      : null;
-    const timePhrase = endStr ? `from ${timeStr} to ${endStr}` : `at ${timeStr}`;
-    return (
-      `Hi ${r.name.split(" ")[0]}! This is a reminder about your upcoming ${r.service} on ${dateStr} ${timePhrase}.\n\n` +
-      `Reply:\n• CONFIRM to confirm\n• CANCEL to cancel\n• TIME [new time] to update your arrival (e.g. TIME 7:30 PM)`
-    );
-  };
-
-  const defaultBody = res ? buildDefault(res) : buildDefault(reservations.find((r) => !r.messageSent) || reservations[0]);
-  const [body, setBody] = useState(defaultBody);
+  const [template, setTemplate] = useState(null); // franchise confirmation template
+  const [msgType, setMsgType] = useState("confirmation");
+  const [body, setBody] = useState("");
+  const [touched, setTouched] = useState(false);
   const [sending, setSending] = useState(false);
 
+  const confirmationBody = (tpl) => {
+    if (!tpl) return "";
+    // Single: fully filled in for this member. Bulk: keep the {placeholders}
+    // visible — they fill in per member at send time.
+    return mode === "single" && res ? fillTemplateFor(tpl, res, dockName) : tpl;
+  };
+
+  useEffect(() => {
+    let active = true;
+    api.getMessageTemplate()
+      .then((t) => {
+        if (!active) return;
+        const tpl = (t && t.template) || "";
+        setTemplate(tpl);
+        setBody((prev) => (prev === "" ? confirmationBody(tpl) : prev));
+      })
+      .catch(() => { if (active) setTemplate(""); });
+    return () => { active = false; };
+  }, []);
+
+  const TYPES = [
+    { key: "confirmation", label: "Confirmation", build: () => confirmationBody(template) },
+    { key: "weather", label: "Weather update",
+      build: () => `Good morning! This is the ${dn} reservation line with a weather update: ` },
+    { key: "sca-closed", label: "Small craft — closed",
+      build: () => `Good evening, this is the ${dn} reservation line. Due to a small craft advisory, the docks are closed all day tomorrow and your reservation is cancelled. We're sorry for the inconvenience and hope to see you on the water soon.` },
+    { key: "sca-delayed", label: "Small craft — delayed",
+      build: () => `Good evening, this is the ${dn} reservation line. Due to a small craft advisory, we expect a delayed opening tomorrow. We'll follow up with timing — please hold tight before heading to the dock. Thanks for your patience!` },
+    { key: "custom", label: "Type your own", build: () => "" },
+  ];
+
+  const pickType = (t) => {
+    setMsgType(t.key);
+    setBody(t.build());
+    setTouched(false);
+  };
+
+  const isConfirmation = msgType === "confirmation";
+  const hasPlaceholders = /\{[a-z_]+\}/.test(body);
   const charCount = body.length;
-  const segments = Math.ceil(charCount / 160);
+  const segments = Math.ceil(charCount / 160) || 1;
 
   // For bulk, figure out targets
   const bulkIds = mode === "bulk" ? (Array.isArray(id) ? id : []) : [];
@@ -1461,10 +1516,13 @@ function SmsComposeModal({ compose, reservations, dockName, dispatch, onSend }) 
 
   const handleSend = async () => {
     setSending(true);
+    // An untouched confirmation sends with no body at all — the server
+    // renders its own template per member (what the preview showed anyway).
+    const sendBody = isConfirmation && !touched ? undefined : body;
     if (mode === "single") {
-      await onSend({ type: "SEND_SMS_CUSTOM", id, body });
+      await onSend({ type: "SEND_SMS_CUSTOM", id, body: sendBody, confirmation: isConfirmation });
     } else {
-      await onSend({ type: "SEND_BULK_CUSTOM", ids: bulkIds, body });
+      await onSend({ type: "SEND_BULK_CUSTOM", ids: bulkIds, body: sendBody, confirmation: isConfirmation });
     }
     setSending(false);
     dispatch({ type: "CLOSE_COMPOSE" });
@@ -1539,26 +1597,27 @@ function SmsComposeModal({ compose, reservations, dockName, dispatch, onSend }) 
           <div style={{
             fontSize: 10, color: palette.muted, fontWeight: 600, letterSpacing: 0.8,
             textTransform: "uppercase", marginBottom: 8, fontFamily: "'Open Sans', sans-serif",
-          }}>Quick messages</div>
+          }}>What are you sending?</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
-            {PRESETS.map((p) => (
-              <button key={p.label} onClick={() => setBody(p.text)}
+            {TYPES.map((t) => (
+              <button key={t.key} onClick={() => pickType(t)}
                 style={{
                   fontSize: 12, fontWeight: 600, fontFamily: "'Open Sans', sans-serif",
                   padding: "7px 12px", borderRadius: 9, cursor: "pointer", textAlign: "left",
-                  background: body === p.text ? palette.accentLight : palette.card,
-                  color: body === p.text ? palette.accent : palette.dark,
-                  border: `1.5px solid ${body === p.text ? palette.accent : palette.border}`,
-                }}>{p.label}</button>
+                  background: msgType === t.key ? palette.accentLight : palette.card,
+                  color: msgType === t.key ? palette.accent : palette.dark,
+                  border: `1.5px solid ${msgType === t.key ? palette.accent : palette.border}`,
+                }}>{t.label}</button>
             ))}
           </div>
           <div style={{
             fontSize: 10, color: palette.muted, fontWeight: 600, letterSpacing: 0.8,
             textTransform: "uppercase", marginBottom: 8, fontFamily: "'Open Sans', sans-serif",
-          }}>Message — review before sending</div>
+          }}>Message — review or edit before sending</div>
           <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
+            value={isConfirmation && template === null ? "Loading your confirmation message…" : body}
+            placeholder={msgType === "custom" ? "Type your message…" : ""}
+            onChange={(e) => { setBody(e.target.value); setTouched(true); }}
             style={{
               width: "100%", minHeight: 180, padding: 16, borderRadius: 12,
               border: `1.5px solid ${palette.border}`, background: "#F5F8FB",
@@ -1576,24 +1635,50 @@ function SmsComposeModal({ compose, reservations, dockName, dispatch, onSend }) 
             <span style={{ color: palette.muted }}>
               {charCount} characters · {segments} segment{segments !== 1 ? "s" : ""}
             </span>
-            <button
-              onClick={() => setBody(defaultBody)}
-              style={{
-                background: "none", border: "none", color: palette.accent,
-                fontSize: 11, fontWeight: 600, cursor: "pointer",
-                fontFamily: "'Open Sans', sans-serif",
-              }}
-            >Reset to default</button>
+            {touched && (
+              <button
+                onClick={() => { const t = TYPES.find((x) => x.key === msgType); setBody(t ? t.build() : ""); setTouched(false); }}
+                style={{
+                  background: "none", border: "none", color: palette.accent,
+                  fontSize: 11, fontWeight: 600, cursor: "pointer",
+                  fontFamily: "'Open Sans', sans-serif",
+                }}
+              >Reset</button>
+            )}
           </div>
 
-          {/* Tip */}
-          <div style={{
-            marginTop: 12, padding: "10px 14px", borderRadius: 10,
-            background: palette.amberLight, fontSize: 11, lineHeight: 1.5,
-            color: palette.amber, fontFamily: "'Open Sans', sans-serif",
-          }}>
-            <span style={{ fontWeight: 700 }}>Tip:</span> Keep the reply instructions (CONFIRM / CANCEL / TIME) so the system can process member responses automatically.
-          </div>
+          {/* Context note */}
+          {mode === "bulk" && hasPlaceholders && (
+            <div style={{
+              marginTop: 12, padding: "10px 14px", borderRadius: 10,
+              background: palette.blueLight, fontSize: 11, lineHeight: 1.5,
+              color: palette.dark, fontFamily: "'Open Sans', sans-serif",
+            }}>
+              Blanks like <strong>{"{first_name}"}</strong> and <strong>{"{time}"}</strong> fill
+              in automatically for each member when it sends.
+            </div>
+          )}
+          {!isConfirmation && (
+            <div style={{
+              marginTop: 12, padding: "10px 14px", borderRadius: 10,
+              background: palette.blueLight, fontSize: 11, lineHeight: 1.5,
+              color: palette.dark, fontFamily: "'Open Sans', sans-serif",
+            }}>
+              This goes out as a notice — it won't mark anyone as messaged or change
+              their confirmation status, and it reaches everyone selected (even if
+              they already got their confirmation text).
+            </div>
+          )}
+          {isConfirmation && (
+            <div style={{
+              marginTop: 12, padding: "10px 14px", borderRadius: 10,
+              background: palette.amberLight, fontSize: 11, lineHeight: 1.5,
+              color: palette.amber, fontFamily: "'Open Sans', sans-serif",
+            }}>
+              <span style={{ fontWeight: 700 }}>Tip:</span> Members can reply to confirm,
+              cancel, or change their time — the system handles those automatically.
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -1703,6 +1788,7 @@ function SmsDrawer({ reservation, dispatch }) {
           </div>
           <div style={{ fontSize: 11, color: palette.muted, fontFamily: "'Open Sans', sans-serif" }}>{res.phone || "No phone number"}</div>
         </div>
+        <SameDayBadge res={res} />
         <TripBadge res={res} />
         <StatusBadge status={res.status} />
       </div>
@@ -4214,7 +4300,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
       case "SEND_SMS_CUSTOM": {
         // Actually send with custom body
         try {
-          const result = await api.sendSms(action.id, action.body, state.currentDock);
+          const result = await api.sendSms(action.id, action.body, state.currentDock, action.confirmation);
           if (result.success) {
             dispatch({ type: "SHOW_TOAST", payload: "SMS sent via Twilio!" });
             await refreshFromServer();
@@ -4242,7 +4328,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
       case "SEND_BULK_CUSTOM": {
         // Actually send bulk with custom body
         try {
-          const result = await api.sendBulk(action.ids, state.currentDock);
+          const result = await api.sendBulk(action.ids, state.currentDock, action.body, action.confirmation);
           if (result.success) {
             const { sent, failed, requested, skippedNoPhone, skippedAlreadySent, skippedFlagged } = result;
             const parts = [];

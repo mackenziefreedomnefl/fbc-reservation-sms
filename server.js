@@ -975,6 +975,7 @@ function rowToReservation(r) {
     dock: r.dock_id,
     sourceId: r.source_id,
     sfStatus: r.sf_status || "",
+    sameDay: !!r.same_day,
     franchiseId: r.franchise_id,
   };
 }
@@ -1224,15 +1225,15 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
              (id, franchise_id, import_batch_id, source_id, dock_id, phone, name, email, service,
               reservation_date, return_time, guests, status, channel, notes,
               member_mobile, contact_mobile, contact_home_phone, contact_phone, location_info,
-              skip_reminder, sf_status)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+              skip_reminder, sf_status, same_day)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
             [
               reservationId, req.franchiseId, batchId, sourceId, dockId, normalizedPhone,
               r.name || `Guest ${i + 1}`, r.email || "", r.service || "Reservation",
               r.date || null, r.endTime || null, r.guests || 1,
               sameDayCallIn ? "confirmed" : (r.status || "unconfirmed"), r.channel || "sms", r.notes || "",
               r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
-              skipReminder, r.sfStatus || null,
+              skipReminder, r.sfStatus || null, sameDayCallIn,
             ]
           );
           added++;
@@ -1558,14 +1559,21 @@ function buildSmsBody(reservation, franchise) {
   return renderTemplate(template, templateValues(reservation, franchise));
 }
 
-async function sendAndLogSms(franchise, reservationRow, customBody, sentByUserId) {
+async function sendAndLogSms(franchise, reservationRow, customBody, sentByUserId, opts = {}) {
+  // markSent: only confirmation-type sends flip message_sent / pending —
+  // a weather update or other notice shouldn't make someone look "asked".
+  const markSent = opts.markSent !== false;
   const client = getTwilioClient(franchise);
   if (!client) throw new Error(`Twilio is not configured for ${franchise.name}`);
   if (!reservationRow.phone) throw new Error("No phone number on file");
   const toPhone = normalizePhone(reservationRow.phone);
   if (!toPhone || toPhone.length < 10) throw new Error("Invalid phone number format");
 
-  const body = customBody || buildSmsBody(reservationRow, franchise);
+  // Custom bodies may still carry {first_name}-style placeholders (e.g. an
+  // edited confirmation sent in bulk) — always render per recipient.
+  const body = customBody
+    ? renderTemplate(customBody, templateValues(reservationRow, franchise))
+    : buildSmsBody(reservationRow, franchise);
   const statusCallback = franchise.base_url
     ? `${franchise.base_url.replace(/\/+$/, "")}/api/sms/status`
     : undefined;
@@ -1585,14 +1593,16 @@ async function sendAndLogSms(franchise, reservationRow, customBody, sentByUserId
        VALUES ($1,$2,$3,$4,'out',$5,$6,$7,$8)`,
       [franchise.id, toPhone, reservationRow.id, reservationRow.dock_id, body, message.sid, message.status, sentByUserId || null]
     );
-    await c.query(
-      `UPDATE reservations
-       SET message_sent = TRUE,
-           message_time = NOW(),
-           status = CASE WHEN status = 'unconfirmed' THEN 'pending' ELSE status END
-       WHERE id = $1`,
-      [reservationRow.id]
-    );
+    if (markSent) {
+      await c.query(
+        `UPDATE reservations
+         SET message_sent = TRUE,
+             message_time = NOW(),
+             status = CASE WHEN status = 'unconfirmed' THEN 'pending' ELSE status END
+         WHERE id = $1`,
+        [reservationRow.id]
+      );
+    }
     await upsertMember(c, franchise.id, toPhone, reservationRow.name, reservationRow.email);
   });
 
@@ -1601,11 +1611,12 @@ async function sendAndLogSms(franchise, reservationRow, customBody, sentByUserId
 
 app.post("/api/sms/send/:id", requireAuth, requireFranchiseContext, async (req, res) => {
   const { id } = req.params;
-  const { customBody } = req.body || {};
+  const { customBody, confirmation } = req.body || {};
   try {
     const reservation = await loadReservationInScope(req, res, id);
     if (!reservation) return;
-    const message = await sendAndLogSms(req.franchise, reservation, customBody, req.session.userId);
+    const message = await sendAndLogSms(req.franchise, reservation, customBody, req.session.userId,
+      { markSent: confirmation !== false });
     const { rows: updated } = await db.query(`SELECT * FROM reservations WHERE id = $1`, [id]);
     res.json({ success: true, messageSid: message.sid, reservation: rowToReservation(updated[0]) });
   } catch (err) {
@@ -1615,7 +1626,12 @@ app.post("/api/sms/send/:id", requireAuth, requireFranchiseContext, async (req, 
 });
 
 app.post("/api/sms/send-bulk", requireAuth, requireFranchiseContext, async (req, res) => {
-  const { ids, dock: dockId } = req.body;
+  // body: optional custom message (placeholders render per recipient).
+  // confirmation=false (weather update / notice): members who already got
+  // their confirmation text are NOT skipped, and the send doesn't mark them
+  // as messaged — skip rules below only guard the confirmation flow.
+  const { ids, dock: dockId, body: customBody, confirmation } = req.body;
+  const isConfirmation = confirmation !== false;
   if (!dockId) return res.status(400).json({ error: "Missing dock parameter" });
   if (denyIfDockOutOfScope(req, res, dockId)) return;
 
@@ -1649,14 +1665,18 @@ app.post("/api/sms/send-bulk", requireAuth, requireFranchiseContext, async (req,
 
   const requested = candidates.length;
   const skippedNoPhone = candidates.filter((r) => !r.phone).length;
-  const skippedAlreadySent = candidates.filter((r) => r.phone && r.message_sent).length;
-  const skippedFlagged = candidates.filter((r) => r.phone && !r.message_sent && r.skip_reminder).length;
-  const targets = candidates.filter((r) => r.phone && !r.message_sent && !r.skip_reminder);
+  const skippedAlreadySent = isConfirmation
+    ? candidates.filter((r) => r.phone && r.message_sent).length
+    : 0;
+  const skippedFlagged = candidates.filter((r) => r.phone && (isConfirmation ? !r.message_sent : true) && r.skip_reminder).length;
+  const targets = candidates.filter((r) =>
+    r.phone && !r.skip_reminder && (isConfirmation ? !r.message_sent : true));
 
   const results = { sent: 0, failed: 0, errors: [] };
   for (const r of targets) {
     try {
-      await sendAndLogSms(req.franchise, r, undefined, req.session.userId);
+      await sendAndLogSms(req.franchise, r, customBody || undefined, req.session.userId,
+        { markSent: isConfirmation });
       results.sent++;
     } catch (err) {
       console.error(`SMS failed for ${r.id}:`, err.message);
