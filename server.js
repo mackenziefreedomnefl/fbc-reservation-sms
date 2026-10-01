@@ -1174,7 +1174,14 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
           skipReminder = !!(dncRows[0] && dncRows[0].do_not_contact);
         }
 
+        const sfStatus = (r.sfStatus || "").toLowerCase();
+        const sfCancelled = sfStatus.startsWith("cancel");
         const match = merging ? existingBySource.get(sourceId) : null;
+        if (!match && r.sfStatus && r.sfStatus !== "Scheduled") {
+          // Only Scheduled rows become new reservations; Canceled / On The
+          // Water / Completed rows ride along purely to update existing ones.
+          continue;
+        }
         if (match) {
           // A time the member changed by SMS (applied or awaiting approval)
           // beats whatever Salesforce still says — don't stomp it.
@@ -1195,6 +1202,13 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
             ]
           );
           updated++;
+          if (sfCancelled && match.status !== "cancelled") {
+            await c.query(
+              `UPDATE reservations SET status = 'cancelled' WHERE id = $1 AND franchise_id = $2`,
+              [match.id, req.franchiseId]
+            );
+            removed++;
+          }
         } else {
           const seq = merging ? existingCount + added + 1 : i + 1;
           const reservationId = `F${req.franchiseId}-${prefix}-B${batchId}-${String(seq).padStart(3, "0")}`;
@@ -1230,13 +1244,15 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
           );
           removed++;
         }
-        await c.query(
-          `UPDATE import_batches SET row_count = (
-             SELECT COUNT(*) FROM reservations WHERE import_batch_id = $1
-           ) WHERE id = $1 AND franchise_id = $2`,
-          [batchId, req.franchiseId]
-        );
       }
+      // Skipped non-Scheduled rows mean the payload length can overstate
+      // what actually landed — recount from the table either way.
+      await c.query(
+        `UPDATE import_batches SET row_count = (
+           SELECT COUNT(*) FROM reservations WHERE import_batch_id = $1
+         ) WHERE id = $1 AND franchise_id = $2`,
+        [batchId, req.franchiseId]
+      );
 
       return { batchId, count: data.length, merged: merging, added, updated, removed };
     });
@@ -2442,6 +2458,61 @@ app.post("/api/sf-sync/ack", requireOriginSecret, async (req, res) => {
     res.json({ cleared: rowCount });
   } catch (err) {
     console.error("sf-sync ack error:", err.message);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// Recovery tool: rows that were wrongly auto-cancelled (e.g. because the SF
+// feed once omitted On The Water / Completed trips) get their status
+// recomputed from their own SMS history. Body: { items: [{sourceId, sfStatus}] }.
+// Only rows currently 'cancelled' whose SF status is still active are touched;
+// a member who genuinely texted a cancel reply stays cancelled.
+app.post("/api/sf-sync/repair-cancelled", requireOriginSecret, async (req, res) => {
+  const items = Array.isArray(req.body.items) ? req.body.items : [];
+  const activeIds = items
+    .filter((x) => x && typeof x.sourceId === "string" && !/^cancel/i.test(String(x.sfStatus || "")))
+    .map((x) => x.sourceId);
+  if (activeIds.length === 0) return res.json({ repaired: [] });
+
+  const cancelRe = /(^|\s)(cancel|cancelled|nope|nah|cant make it|can not make it|cannot make it|wont be there|not coming|count me out|need to cancel|want to cancel|have to cancel|please cancel)(\s|$)|^(no|n)$/;
+  const confirmRe = /(^|\s)(confirm|confirmed|yes|yep|yeah|yup|sounds good|okay|absolutely|perfect|see you (there|soon|then)|will be there|looking forward|count me in|all good|good to go)(\s|$)|^(y|c|ok|sure|good|great)$/;
+
+  try {
+    const { rows } = await db.query(
+      `SELECT id, franchise_id, phone, name, status, message_sent, time_updated
+       FROM reservations WHERE status = 'cancelled' AND source_id = ANY($1::text[])`,
+      [activeIds]
+    );
+    const repaired = [];
+    for (const r of rows) {
+      let newStatus = null;
+      if (r.time_updated) {
+        newStatus = "confirmed";
+      } else if (r.phone) {
+        const { rows: inbound } = await db.query(
+          `SELECT body FROM messages
+           WHERE franchise_id = $1 AND phone = $2 AND direction = 'in'
+           ORDER BY created_at ASC`,
+          [r.franchise_id, r.phone]
+        );
+        for (const m of inbound) {
+          const t = String(m.body || "").toLowerCase().replace(/[^a-z0-9\s:]/g, "").trim();
+          if (cancelRe.test(t)) newStatus = "cancelled";
+          else if (confirmRe.test(t)) newStatus = "confirmed";
+        }
+      }
+      if (!newStatus) newStatus = r.message_sent ? "pending" : "unconfirmed";
+      if (newStatus !== "cancelled") {
+        await db.query(
+          `UPDATE reservations SET status = $1 WHERE id = $2`,
+          [newStatus, r.id]
+        );
+        repaired.push({ id: r.id, name: r.name, status: newStatus });
+      }
+    }
+    res.json({ repaired, checked: rows.length });
+  } catch (err) {
+    console.error("repair-cancelled error:", err.message);
     res.status(500).json({ error: "Database error" });
   }
 });
