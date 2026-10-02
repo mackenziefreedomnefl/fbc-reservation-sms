@@ -1028,7 +1028,7 @@ function DockPills({ current, onSwitch }) {
               fontFamily: "'Open Sans', sans-serif", transition: "all 0.15s",
             }}
           >
-            {active ? "⚓ " : ""}{DOCK_SHORT_NAMES[dock.id] || dock.name}
+            {DOCK_SHORT_NAMES[dock.id] || dock.name}
           </button>
         );
       })}
@@ -4622,7 +4622,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
                   display: "flex", alignItems: "center", gap: 6,
                 }}
               >
-                <span style={{ fontSize: 13 }}>⚓</span> {DOCK_SHORT_NAMES[state.currentDock] || DOCKS.find((d) => d.id === state.currentDock)?.name || "Switch Dock"}
+                {DOCK_SHORT_NAMES[state.currentDock] || DOCKS.find((d) => d.id === state.currentDock)?.name || "Switch Dock"}
               </button>
             )}
             {state.currentDock && isDockScoped && (
@@ -4634,7 +4634,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
                 fontFamily: "'Open Sans', sans-serif",
                 display: "flex", alignItems: "center", gap: 6,
               }}>
-                <span style={{ fontSize: 13 }}>⚓</span> {DOCK_SHORT_NAMES[state.currentDock] || DOCKS.find((d) => d.id === state.currentDock)?.name || ""}
+                {DOCK_SHORT_NAMES[state.currentDock] || DOCKS.find((d) => d.id === state.currentDock)?.name || ""}
               </div>
             )}
             {me && me.user && me.user.role === "super_admin" && (
@@ -4718,9 +4718,6 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
                     e.currentTarget.style.transform = "translateY(0)";
                   }}
                 >
-                  <div style={{
-                    fontSize: 24, marginBottom: 10,
-                  }}>⚓</div>
                   <div style={{
                     fontSize: 16, fontWeight: 700, color: palette.dark,
                     fontFamily: "'Montserrat', sans-serif", marginBottom: 4,
@@ -4864,7 +4861,6 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
                 }}>
                   {state.reservations.length === 0 ? (
                     <>
-                      <div style={{ fontSize: 40, marginBottom: 12 }}>⚓</div>
                       <div style={{ fontSize: 16, fontWeight: 600, color: palette.dark, marginBottom: 6 }}>
                         No reservations for {state.viewDate === "today" ? "today" : state.viewDate === "tomorrow" ? "tomorrow" : shortDayLabel(state.viewDate)} yet
                       </div>
