@@ -2097,7 +2097,10 @@ async function parseAndApplyReply(inboundText, reservation) {
   // Meridiem inference: 1–6 reads as afternoon, 7–12 as morning/noon.
   const bareTime = !timeMatch && (
     replyLower.match(/(\d{1,2}):(\d{2})(?!\s*(?:am|pm))/) ||
-    replyLower.match(/(?:arriv\w+|coming|be there|eta|around|make it|move to|updat\w+(?: to)?|\bat)\s+(\d{1,2})(?::(\d{2}))?\b/)
+    // Compact: the whole message is just "930" / "1030"
+    replyLower.match(/^\s*(\d{1,2})(\d{2})\s*$/) ||
+    // With arrival context: "coming at 930", "eta 10"
+    replyLower.match(/(?:arriv\w+|coming|be there|eta|around|make it|move to|updat\w+(?: to)?|\bat)\s+(\d{1,2}):?(\d{2})?\b/)
   );
   const namedTime = /\bnoon\b/.test(replyLower) ? { h: 12, m: 0 }
     : /\bmidnight\b/.test(replyLower) ? { h: 0, m: 0 } : null;
@@ -2160,7 +2163,7 @@ async function parseAndApplyReply(inboundText, reservation) {
     let h = parseInt(bareTime[1]);
     const m = parseInt(bareTime[2] || "0");
     if (h >= 1 && h <= 6) h += 12; // "5" on a boat dock means 5 PM
-    if (h >= 0 && h <= 23) return flagTimeChangeRequest(reservation, h, m);
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return flagTimeChangeRequest(reservation, h, m);
   }
   if (/(running late|gonna be late|going to be late|be a (little|bit) late|bit behind|behind schedule|stuck in traffic|push (it )?back|be there later|come later|little later)/.test(replyLower)) {
     return RUNNING_LATE_RESPONSE;
