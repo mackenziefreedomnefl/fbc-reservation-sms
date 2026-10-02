@@ -864,6 +864,20 @@ function CancelledAtNote({ res }) {
   );
 }
 
+// Collapse seasonal timeframe names ("Fall Weekend - Morning") to the part
+// staff care about. Unrecognized names show as-is.
+function shortTimeframe(name) {
+  const n = (name || "").toLowerCase();
+  if (!n) return "";
+  if (n.includes("full day early return")) return "Full Day · Early Return";
+  if (n.includes("full day")) return "Full Day";
+  if (n.includes("morning")) return "Morning";
+  if (n.includes("afternoon")) return "Afternoon";
+  if (n.includes("evening")) return "Evening (5 PM)";
+  if (n.includes("open hours")) return "Open Hours";
+  return name;
+}
+
 // Same-day call-in tag — booked today for today, auto-confirmed on import.
 function SameDayBadge({ res }) {
   if (!res.sameDay) return null;
@@ -1128,10 +1142,10 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
             {res.timeUpdated && <span style={{ fontSize: 9, marginLeft: 3 }}>⏱ updated</span>}
           </div>
           {res.timeframeName && (
-            <div title="Booked timeframe (PDTF)" style={{
+            <div title={`Booked timeframe: ${res.timeframeName}`} style={{
               fontSize: 10, color: palette.muted, opacity: 0.85,
               fontFamily: "'Open Sans', sans-serif",
-            }}>{res.timeframeName}</div>
+            }}>{shortTimeframe(res.timeframeName)}</div>
           )}
         </div>
 
