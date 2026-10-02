@@ -2213,13 +2213,23 @@ app.post("/api/sms/incoming", express.urlencoded({ extended: false }), async (re
       await upsertMember(c, franchise.id, normalizedFrom, reservation ? reservation.name : null, null);
     });
 
-    responseText = await parseAndApplyReply(inboundText, reservation);
+    // Only treat the text as being ABOUT a reservation when that reservation
+    // is live (today or upcoming, club-local). Someone whose last trip was
+    // last month texting "any boats tomorrow?" gets the general greeting —
+    // the bot shouldn't assume they mean a long-finished booking. The thread
+    // still logs under their old dock so staff can see and reply.
+    const resDay = reservation && reservation.reservation_date
+      ? new Date(reservation.reservation_date).toLocaleDateString("en-CA", { timeZone: CLUB_TZ })
+      : null;
+    const activeReservation = reservation && resDay && resDay >= clubDateString(0) ? reservation : null;
+
+    responseText = await parseAndApplyReply(inboundText, activeReservation);
 
     // Bot punted to a human — flag the row so dock staff see it needs them.
-    if (reservation && (responseText === HANDOFF_RESPONSE || responseText === ROBOTIC_FALLBACK)) {
+    if (activeReservation && (responseText === HANDOFF_RESPONSE || responseText === ROBOTIC_FALLBACK)) {
       await db.query(
         `UPDATE reservations SET needs_attention = TRUE WHERE id = $1`,
-        [reservation.id]
+        [activeReservation.id]
       );
     }
 
