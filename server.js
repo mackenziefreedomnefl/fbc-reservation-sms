@@ -2010,9 +2010,7 @@ app.post("/api/members/:phone/dnc", requireAuth, requireFranchiseContext, async 
 const CONFIRM_RESPONSE = "Thank you! Your reservation is confirmed. We look forward to seeing you!";
 const CANCEL_RESPONSE = "Your reservation has been cancelled. If you change your mind, please call us to rebook.";
 const HANDOFF_RESPONSE =
-  "Thanks for reaching out! A team member will follow up with you shortly.\n\n" +
-  "If you also want to confirm or change this reservation, reply YES, NO, " +
-  "or a new time like \"7:30 AM\".";
+  "Thanks for reaching out! A team member will follow up with you shortly.";
 // Member says they're late but gave no time — the one thing the bot can fix
 // on its own is the arrival time, so ask for it instead of handing off.
 const RUNNING_LATE_RESPONSE =
