@@ -990,6 +990,7 @@ function rowToReservation(r) {
     needsAttention: !!r.needs_attention,
     windowStart: r.sf_window_start || null,
     windowEnd: r.sf_window_end || null,
+    timeframeName: r.sf_timeframe || "",
     sameDay: !!r.same_day,
     franchiseId: r.franchise_id,
   };
@@ -1215,14 +1216,15 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
                sf_in_at = COALESCE($17::timestamptz, sf_in_at),
                cancelled_at = COALESCE($18::timestamptz, cancelled_at),
                sf_window_start = COALESCE($19::timestamptz, sf_window_start),
-               sf_window_end = COALESCE($20::timestamptz, sf_window_end)
-             WHERE id = $21 AND franchise_id = $22`,
+               sf_window_end = COALESCE($20::timestamptz, sf_window_end),
+               sf_timeframe = COALESCE(NULLIF($21, ''), sf_timeframe)
+             WHERE id = $22 AND franchise_id = $23`,
             [
               normalizedPhone, r.name || match.name || "Guest", r.email || "", r.service || "Reservation",
               !!keepDate, r.date || null, r.endTime || null, r.guests || 1, r.notes || "",
               r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
               r.sfStatus || null, r.sfOutAt || null, r.sfInAt || null, r.sfCancelledAt || null,
-              r.windowStart || null, r.windowEnd || null,
+              r.windowStart || null, r.windowEnd || null, r.timeframeName || "",
               match.id, req.franchiseId,
             ]
           );
@@ -1249,8 +1251,8 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
               reservation_date, return_time, guests, status, channel, notes,
               member_mobile, contact_mobile, contact_home_phone, contact_phone, location_info,
               skip_reminder, sf_status, same_day, sf_out_at, sf_in_at, cancelled_at,
-              sf_window_start, sf_window_end)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
+              sf_window_start, sf_window_end, sf_timeframe)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
             [
               reservationId, req.franchiseId, batchId, sourceId, dockId, normalizedPhone,
               r.name || `Guest ${i + 1}`, r.email || "", r.service || "Reservation",
@@ -1259,6 +1261,7 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
               r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
               skipReminder, r.sfStatus || null, sameDayCallIn, r.sfOutAt || null, r.sfInAt || null,
               r.sfCancelledAt || null, r.windowStart || null, r.windowEnd || null,
+              r.timeframeName || null,
             ]
           );
           added++;
