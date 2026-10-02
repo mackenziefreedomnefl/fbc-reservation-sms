@@ -2009,8 +2009,26 @@ app.post("/api/members/:phone/dnc", requireAuth, requireFranchiseContext, async 
 // the costlier failure mode of the two.
 const CONFIRM_RESPONSE = "Thank you! Your reservation is confirmed. We look forward to seeing you!";
 const CANCEL_RESPONSE = "Your reservation has been cancelled. If you change your mind, please call us to rebook.";
-const HANDOFF_RESPONSE =
-  "Thanks for reaching out! A team member will follow up with you shortly.";
+const DOCK_PHONES = {
+  "jax-beach": "904-562-8676",
+  "julington-east": "904-625-1847",
+  "julington-west": "904-874-6314",
+  "camachee-cove": "904-562-8842",
+  "shipyard": "904-710-1358",
+};
+const HANDOFF_PREFIX = "Someone will be with you shortly!";
+function handoffResponse(reservation) {
+  const dockPhone = reservation && DOCK_PHONES[reservation.dock_id];
+  return (
+    `${HANDOFF_PREFIX} Just so you know, this line is primarily for reservation confirmations. ` +
+    `For same-day or new reservations, the fastest way is to call the dock` +
+    (dockPhone
+      ? ` at ${dockPhone}.`
+      : `:\n• Jacksonville Beach: 904-562-8676\n• Julington Creek East: 904-625-1847\n` +
+        `• Julington Creek West (Pontoons Only): 904-874-6314\n• Camachee Cove: 904-562-8842\n` +
+        `• St. Augustine Shipyard: 904-710-1358`)
+  );
+}
 // Member says they're late but gave no time — the one thing the bot can fix
 // on its own is the arrival time, so ask for it instead of handing off.
 const RUNNING_LATE_RESPONSE =
@@ -2138,7 +2156,7 @@ async function parseAndApplyReply(inboundText, reservation) {
       case "running_late":
         return RUNNING_LATE_RESPONSE;
       case "handoff":
-        return HANDOFF_RESPONSE;
+        return handoffResponse(reservation);
       case "unknown":
         // Fall through to regex tiers; if those also miss, robotic fallback.
         break;
@@ -2167,7 +2185,7 @@ async function parseAndApplyReply(inboundText, reservation) {
     return RUNNING_LATE_RESPONSE;
   }
   if (handoffOrInquiry.test(replyLower) || inboundText.includes("?")) {
-    return HANDOFF_RESPONSE;
+    return handoffResponse(reservation);
   }
 
   return ROBOTIC_FALLBACK;
@@ -2226,7 +2244,7 @@ app.post("/api/sms/incoming", express.urlencoded({ extended: false }), async (re
     responseText = await parseAndApplyReply(inboundText, activeReservation);
 
     // Bot punted to a human — flag the row so dock staff see it needs them.
-    if (activeReservation && (responseText === HANDOFF_RESPONSE || responseText === ROBOTIC_FALLBACK)) {
+    if (activeReservation && (responseText.startsWith(HANDOFF_PREFIX) || responseText === ROBOTIC_FALLBACK)) {
       await db.query(
         `UPDATE reservations SET needs_attention = TRUE WHERE id = $1`,
         [activeReservation.id]
