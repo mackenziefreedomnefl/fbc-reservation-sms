@@ -2016,14 +2016,17 @@ const DOCK_PHONES = {
   "camachee-cove": "904-562-8842",
   "shipyard": "904-710-1358",
 };
-const HANDOFF_PREFIX = "Someone will be with you shortly!";
+// This line does exactly three things: confirm, cancel, change arrival
+// time. Everything else gets redirected to a phone call — no "someone will
+// follow up" promises (though staff still see the thread and the row flag).
+const HANDOFF_PREFIX = "This line is just for confirming, canceling, or changing arrival times";
 function handoffResponse(reservation) {
   const dockPhone = reservation && DOCK_PHONES[reservation.dock_id];
   return (
-    `${HANDOFF_PREFIX} Just so you know, this line is primarily for reservation confirmations. ` +
-    `For same-day or new reservations, the fastest way is to call the dock` +
+    `${HANDOFF_PREFIX} on existing reservations. For anything else — same-day bookings, ` +
+    `new reservations, or questions — please give the dock a call` +
     (dockPhone
-      ? ` at ${dockPhone}.`
+      ? ` at ${dockPhone} and they'll take care of you.`
       : `:\n• Jacksonville Beach: 904-562-8676\n• Julington Creek East: 904-625-1847\n` +
         `• Julington Creek West (Pontoons Only): 904-874-6314\n• Camachee Cove: 904-562-8842\n` +
         `• St. Augustine Shipyard: 904-710-1358`)
@@ -2035,8 +2038,8 @@ const RUNNING_LATE_RESPONSE =
   "No problem — thanks for the heads up! What time should we expect you? " +
   "Reply with a new arrival time (like \"10:30 AM\") and we'll update your reservation.";
 const ROBOTIC_FALLBACK =
-  "Thanks for your message! A team member will follow up with you shortly. " +
-  "If you're confirming your reservation you can also just reply YES, or NO to cancel.";
+  "Sorry, I didn't catch that! Reply YES to confirm your reservation, NO to cancel, " +
+  "or a new arrival time like \"9:30\". For anything else, please call your dock.";
 
 async function applyCancel(reservation) {
   await db.query(
@@ -2123,8 +2126,8 @@ async function parseAndApplyReply(inboundText, reservation) {
   const handoffOrInquiry = /(human|real person|talk to|speak to|chat with|customer service|live person|representative|\bagent\b|\bmanager\b|do you have|any boats|boats? avail|any avail|any open|any slot|any free|reservation for|reserve a|book (a|another)|want to book|new booking)/;
 
   if (!reservation) {
-    return "Hi there! This line is primarily for confirming or updating a reservation. How can we help, or who are you looking to contact?\n\n" +
-      "For Member Service, call 904-544-4204. Or reach your dock directly:\n" +
+    return "Hi there! This line is just for confirming, canceling, or changing times on existing reservations.\n\n" +
+      "For anything else, call Member Service at 904-544-4204 or your dock directly:\n" +
       "• Jacksonville Beach: 904-562-8676\n" +
       "• Julington Creek East: 904-625-1847\n" +
       "• Julington Creek West (Pontoons Only): 904-874-6314\n" +
