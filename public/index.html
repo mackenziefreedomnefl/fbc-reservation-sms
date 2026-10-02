@@ -1129,16 +1129,25 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
           </div>
           {(() => {
             // Booked timeframe (the PDTF slot) beneath the planned times —
-            // shown when it differs, so requests are easy to judge.
+            // shown when it differs, so requests are easy to judge. The
+            // system stores many slots with a midnight start / 11:59 PM end
+            // as placeholders, so only the meaningful edge is shown.
             if (!res.windowStart || !res.windowEnd) return null;
             const clk = (v) => new Date(v).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
             const ws = clk(res.windowStart), we = clk(res.windowEnd);
-            if (ws === timeStr && we === endStr) return null;
+            const openStart = ws === "12:00 AM";
+            const openEnd = we === "11:59 PM" || we === "12:00 AM";
+            let label = null;
+            if (openStart && openEnd) label = null;              // full day — nothing to flag
+            else if (openStart) label = `TF until ${we}`;        // only the end matters
+            else if (openEnd) label = `TF from ${ws}`;           // only the start matters
+            else if (ws !== timeStr || we !== endStr) label = `TF ${ws} – ${we}`;
+            if (!label) return null;
             return (
               <div title="Booked timeframe (what their reservation covers)" style={{
                 fontSize: 10, color: palette.muted, opacity: 0.85,
                 fontFamily: "'Open Sans', sans-serif",
-              }}>TF {ws} – {we}</div>
+              }}>{label}</div>
             );
           })()}
         </div>
