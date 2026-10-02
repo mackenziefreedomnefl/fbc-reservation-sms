@@ -776,7 +776,7 @@ const IMSG_FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Open 
 
 const statusConfig = {
   confirmed: { color: palette.green, bg: palette.greenLight, label: "Confirmed", icon: "✓" },
-  pending: { color: palette.amber, bg: palette.amberLight, label: "Pending", icon: "◷" },
+  pending: { color: palette.amber, bg: palette.amberLight, label: "No Reply", icon: "◷" },
   unconfirmed: { color: palette.blue, bg: palette.blueLight, label: "Awaiting", icon: "○" },
   cancelled: { color: palette.red, bg: palette.redLight, label: "Cancelled", icon: "✕" },
 };
@@ -830,6 +830,35 @@ function TripBadge({ res }) {
     <span style={{
       fontSize: 11, padding: "3px 8px", borderRadius: 6,
       background: bg, color, fontWeight: 700, whiteSpace: "nowrap",
+      fontFamily: "'Open Sans', sans-serif",
+    }}>{label}</span>
+  );
+}
+
+// Member said something the bot couldn't handle — a human needs to reply.
+// Cleared automatically when staff text them or change the status.
+function AttentionBadge({ res }) {
+  if (!res.needsAttention) return null;
+  return (
+    <span title="Member replied with something the bot couldn't handle — follow up personally" style={{
+      fontSize: 11, padding: "3px 8px", borderRadius: 6,
+      background: "#FCE8EC", color: "#C0392B", fontWeight: 700,
+      whiteSpace: "nowrap", fontFamily: "'Open Sans', sans-serif",
+      border: "1px solid #C0392B40",
+    }}>📣 DOCK STAFF</span>
+  );
+}
+
+// When a cancelled reservation was cancelled (member text or Salesforce).
+function CancelledAtNote({ res }) {
+  if (res.status !== "cancelled" || !res.cancelledAt) return null;
+  const d = new Date(res.cancelledAt);
+  if (isNaN(d.getTime())) return null;
+  const label = d.toLocaleDateString("en-US", { month: "numeric", day: "numeric" }) +
+    " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return (
+    <span title="When this reservation was cancelled" style={{
+      fontSize: 11, color: palette.muted, whiteSpace: "nowrap",
       fontFamily: "'Open Sans', sans-serif",
     }}>{label}</span>
   );
@@ -1175,9 +1204,11 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
               border: `1px solid ${palette.amber}40`,
             }}>⏰ TIME CHANGE</span>
           )}
+          <AttentionBadge res={res} />
           <SameDayBadge res={res} />
           <TripBadge res={res} />
           <StatusBadge status={res.status} />
+          <CancelledAtNote res={res} />
         </div>
       </div>
 
@@ -1797,9 +1828,11 @@ function SmsDrawer({ reservation, dispatch }) {
           </div>
           <div style={{ fontSize: 11, color: palette.muted, fontFamily: "'Open Sans', sans-serif" }}>{res.phone || "No phone number"}</div>
         </div>
+        <AttentionBadge res={res} />
         <SameDayBadge res={res} />
         <TripBadge res={res} />
         <StatusBadge status={res.status} />
+        <CancelledAtNote res={res} />
       </div>
 
       {/* Reservation Info Bar */}
@@ -4250,7 +4283,12 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
     return () => { active = false; };
   }, [state.viewDate]);
 
+  // On future days, already-cancelled folks are noise — hide them from the
+  // default view (the Cancelled tab still shows them). Today keeps them
+  // visible so the dock sees day-of cancellations.
+  const futureDay = state.viewDate !== "today";
   const filtered = state.reservations
+    .filter((r) => !(futureDay && state.filter === "all" && r.status === "cancelled"))
     .filter((r) => state.filter === "all" || r.status === state.filter)
     .filter((r) =>
       state.search === "" ||
@@ -4261,7 +4299,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
   const counts = {
-    all: state.reservations.length,
+    all: state.reservations.filter((r) => !(futureDay && r.status === "cancelled")).length,
     confirmed: state.reservations.filter((r) => r.status === "confirmed").length,
     pending: state.reservations.filter((r) => r.status === "pending").length,
     unconfirmed: state.reservations.filter((r) => r.status === "unconfirmed").length,

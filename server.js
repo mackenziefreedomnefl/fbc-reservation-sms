@@ -986,6 +986,8 @@ function rowToReservation(r) {
     sfStatus: r.sf_status || "",
     sfOutAt: r.sf_out_at || null,
     sfInAt: r.sf_in_at || null,
+    cancelledAt: r.cancelled_at || null,
+    needsAttention: !!r.needs_attention,
     sameDay: !!r.same_day,
     franchiseId: r.franchise_id,
   };
@@ -1208,21 +1210,24 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
                contact_phone = $13, location_info = $14,
                sf_status = COALESCE($15, sf_status),
                sf_out_at = COALESCE($16::timestamptz, sf_out_at),
-               sf_in_at = COALESCE($17::timestamptz, sf_in_at)
-             WHERE id = $18 AND franchise_id = $19`,
+               sf_in_at = COALESCE($17::timestamptz, sf_in_at),
+               cancelled_at = COALESCE($18::timestamptz, cancelled_at)
+             WHERE id = $19 AND franchise_id = $20`,
             [
               normalizedPhone, r.name || match.name || "Guest", r.email || "", r.service || "Reservation",
               !!keepDate, r.date || null, r.endTime || null, r.guests || 1, r.notes || "",
               r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
-              r.sfStatus || null, r.sfOutAt || null, r.sfInAt || null,
+              r.sfStatus || null, r.sfOutAt || null, r.sfInAt || null, r.sfCancelledAt || null,
               match.id, req.franchiseId,
             ]
           );
           updated++;
           if (sfCancelled && match.status !== "cancelled") {
             await c.query(
-              `UPDATE reservations SET status = 'cancelled' WHERE id = $1 AND franchise_id = $2`,
-              [match.id, req.franchiseId]
+              `UPDATE reservations SET status = 'cancelled',
+                 cancelled_at = COALESCE($3::timestamptz, cancelled_at, NOW())
+               WHERE id = $1 AND franchise_id = $2`,
+              [match.id, req.franchiseId, r.sfCancelledAt || null]
             );
             removed++;
           }
@@ -1238,8 +1243,8 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
              (id, franchise_id, import_batch_id, source_id, dock_id, phone, name, email, service,
               reservation_date, return_time, guests, status, channel, notes,
               member_mobile, contact_mobile, contact_home_phone, contact_phone, location_info,
-              skip_reminder, sf_status, same_day, sf_out_at, sf_in_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
+              skip_reminder, sf_status, same_day, sf_out_at, sf_in_at, cancelled_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
             [
               reservationId, req.franchiseId, batchId, sourceId, dockId, normalizedPhone,
               r.name || `Guest ${i + 1}`, r.email || "", r.service || "Reservation",
@@ -1247,6 +1252,7 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
               sameDayCallIn ? "confirmed" : (r.status || "unconfirmed"), r.channel || "sms", r.notes || "",
               r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
               skipReminder, r.sfStatus || null, sameDayCallIn, r.sfOutAt || null, r.sfInAt || null,
+              r.sfCancelledAt || null,
             ]
           );
           added++;
@@ -1261,7 +1267,9 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
           if (!/^[a-zA-Z0-9]{15,18}$/.test(sourceId)) continue;
           if (row.status === "cancelled") continue;
           await c.query(
-            `UPDATE reservations SET status = 'cancelled' WHERE id = $1 AND franchise_id = $2`,
+            `UPDATE reservations SET status = 'cancelled',
+               cancelled_at = COALESCE(cancelled_at, NOW())
+             WHERE id = $1 AND franchise_id = $2`,
             [row.id, req.franchiseId]
           );
           removed++;
@@ -1407,7 +1415,9 @@ app.post("/api/reservations/:id/status", requireAuth, requireFranchiseContext, a
     const inScope = await loadReservationInScope(req, res, id);
     if (!inScope) return;
     const { rows } = await db.query(
-      `UPDATE reservations SET status = $1
+      `UPDATE reservations SET status = $1,
+         needs_attention = FALSE,
+         cancelled_at = CASE WHEN $1 = 'cancelled' THEN COALESCE(cancelled_at, NOW()) ELSE cancelled_at END
        WHERE id = $2 AND franchise_id = $3
        RETURNING *`,
       [status, id, req.franchiseId]
@@ -1524,7 +1534,7 @@ app.post("/api/reservations/:id/reject-time-change", requireAuth, requireFranchi
 // The default confirmation text, also shown as the starting point in the
 // template editor. Keep {placeholders} in sync with TEMPLATE_PLACEHOLDERS.
 const DEFAULT_MESSAGE_TEMPLATE =
-  "Hi {first_name}! This is a reminder about your upcoming {boat} on {date} {time_phrase}.\n\n" +
+  "Hi {first_name}! This is a reminder about your upcoming reservation on {date} {time_phrase}.\n\n" +
   "Can you make it? Reply YES to confirm and NO to cancel, or send a new time (e.g. 7:30 AM) if you need to change your arrival.";
 
 const TEMPLATE_PLACEHOLDERS = [
@@ -1616,6 +1626,11 @@ async function sendAndLogSms(franchise, reservationRow, customBody, sentByUserId
         [reservationRow.id]
       );
     }
+    // Any staff-initiated text counts as the human follow-up.
+    await c.query(
+      `UPDATE reservations SET needs_attention = FALSE WHERE id = $1 AND needs_attention`,
+      [reservationRow.id]
+    );
     await upsertMember(c, franchise.id, toPhone, reservationRow.name, reservationRow.email);
   });
 
@@ -1997,7 +2012,10 @@ const ROBOTIC_FALLBACK =
   "If you're confirming your reservation you can also just reply YES, or NO to cancel.";
 
 async function applyCancel(reservation) {
-  await db.query(`UPDATE reservations SET status = 'cancelled' WHERE id = $1`, [reservation.id]);
+  await db.query(
+    `UPDATE reservations SET status = 'cancelled', cancelled_at = NOW() WHERE id = $1`,
+    [reservation.id]
+  );
   return CANCEL_RESPONSE;
 }
 
@@ -2177,6 +2195,14 @@ app.post("/api/sms/incoming", express.urlencoded({ extended: false }), async (re
     });
 
     responseText = await parseAndApplyReply(inboundText, reservation);
+
+    // Bot punted to a human — flag the row so dock staff see it needs them.
+    if (reservation && (responseText === HANDOFF_RESPONSE || responseText === ROBOTIC_FALLBACK)) {
+      await db.query(
+        `UPDATE reservations SET needs_attention = TRUE WHERE id = $1`,
+        [reservation.id]
+      );
+    }
 
     await db.query(
       `INSERT INTO messages (franchise_id, phone, reservation_id, dock_id, direction, body)
