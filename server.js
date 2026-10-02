@@ -1983,6 +1983,11 @@ const HANDOFF_RESPONSE =
   "Thanks for reaching out! A team member will follow up with you shortly.\n\n" +
   "If you also want to confirm or change this reservation, reply YES, NO, " +
   "or a new time like \"7:30 AM\".";
+// Member says they're late but gave no time — the one thing the bot can fix
+// on its own is the arrival time, so ask for it instead of handing off.
+const RUNNING_LATE_RESPONSE =
+  "No problem — thanks for the heads up! What time should we expect you? " +
+  "Reply with a new arrival time (like \"10:30 AM\") and we'll update your reservation.";
 const ROBOTIC_FALLBACK =
   "Thanks for your message! A team member will follow up with you shortly. " +
   "If you're confirming your reservation you can also just reply YES, or NO to cancel.";
@@ -2089,6 +2094,8 @@ async function parseAndApplyReply(inboundText, reservation) {
           return flagTimeChangeRequest(reservation, llm.hour, llm.minute);
         }
         break;
+      case "running_late":
+        return RUNNING_LATE_RESPONSE;
       case "handoff":
         return HANDOFF_RESPONSE;
       case "unknown":
@@ -2114,6 +2121,9 @@ async function parseAndApplyReply(inboundText, reservation) {
     const m = parseInt(bareTime[2] || "0");
     if (h >= 1 && h <= 6) h += 12; // "5" on a boat dock means 5 PM
     if (h >= 0 && h <= 23) return flagTimeChangeRequest(reservation, h, m);
+  }
+  if (/(running late|gonna be late|going to be late|be a (little|bit) late|bit behind|behind schedule|stuck in traffic|push (it )?back|be there later|come later|little later)/.test(replyLower)) {
+    return RUNNING_LATE_RESPONSE;
   }
   if (handoffOrInquiry.test(replyLower) || inboundText.includes("?")) {
     return HANDOFF_RESPONSE;
