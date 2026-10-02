@@ -2020,16 +2020,15 @@ const DOCK_PHONES = {
 // time. Everything else gets redirected to a phone call — no "someone will
 // follow up" promises (though staff still see the thread and the row flag).
 const HANDOFF_PREFIX = "This line is just for confirming, canceling, or changing arrival times";
-function handoffResponse(reservation) {
-  const dockPhone = reservation && DOCK_PHONES[reservation.dock_id];
+function handoffResponse() {
   return (
     `${HANDOFF_PREFIX} on existing reservations. For anything else — same-day bookings, ` +
-    `new reservations, or questions — please give the dock a call` +
-    (dockPhone
-      ? ` at ${dockPhone} and they'll take care of you.`
-      : `:\n• Jacksonville Beach: 904-562-8676\n• Julington Creek East: 904-625-1847\n` +
-        `• Julington Creek West (Pontoons Only): 904-874-6314\n• Camachee Cove: 904-562-8842\n` +
-        `• St. Augustine Shipyard: 904-710-1358`)
+    `new reservations, or questions — please give the dock a call:\n` +
+    `• Jacksonville Beach: 904-562-8676\n` +
+    `• Julington Creek East: 904-625-1847\n` +
+    `• Julington Creek West (Pontoons Only): 904-874-6314\n` +
+    `• Camachee Cove: 904-562-8842\n` +
+    `• St. Augustine Shipyard: 904-710-1358`
   );
 }
 // Member says they're late but gave no time — the one thing the bot can fix
@@ -2159,7 +2158,7 @@ async function parseAndApplyReply(inboundText, reservation) {
       case "running_late":
         return RUNNING_LATE_RESPONSE;
       case "handoff":
-        return handoffResponse(reservation);
+        return handoffResponse();
       case "unknown":
         // Fall through to regex tiers; if those also miss, robotic fallback.
         break;
@@ -2188,7 +2187,7 @@ async function parseAndApplyReply(inboundText, reservation) {
     return RUNNING_LATE_RESPONSE;
   }
   if (handoffOrInquiry.test(replyLower) || inboundText.includes("?")) {
-    return handoffResponse(reservation);
+    return handoffResponse();
   }
 
   return ROBOTIC_FALLBACK;
