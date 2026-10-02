@@ -988,6 +988,8 @@ function rowToReservation(r) {
     sfInAt: r.sf_in_at || null,
     cancelledAt: r.cancelled_at || null,
     needsAttention: !!r.needs_attention,
+    windowStart: r.sf_window_start || null,
+    windowEnd: r.sf_window_end || null,
     sameDay: !!r.same_day,
     franchiseId: r.franchise_id,
   };
@@ -1211,13 +1213,16 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
                sf_status = COALESCE($15, sf_status),
                sf_out_at = COALESCE($16::timestamptz, sf_out_at),
                sf_in_at = COALESCE($17::timestamptz, sf_in_at),
-               cancelled_at = COALESCE($18::timestamptz, cancelled_at)
-             WHERE id = $19 AND franchise_id = $20`,
+               cancelled_at = COALESCE($18::timestamptz, cancelled_at),
+               sf_window_start = COALESCE($19::timestamptz, sf_window_start),
+               sf_window_end = COALESCE($20::timestamptz, sf_window_end)
+             WHERE id = $21 AND franchise_id = $22`,
             [
               normalizedPhone, r.name || match.name || "Guest", r.email || "", r.service || "Reservation",
               !!keepDate, r.date || null, r.endTime || null, r.guests || 1, r.notes || "",
               r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
               r.sfStatus || null, r.sfOutAt || null, r.sfInAt || null, r.sfCancelledAt || null,
+              r.windowStart || null, r.windowEnd || null,
               match.id, req.franchiseId,
             ]
           );
@@ -1243,8 +1248,9 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
              (id, franchise_id, import_batch_id, source_id, dock_id, phone, name, email, service,
               reservation_date, return_time, guests, status, channel, notes,
               member_mobile, contact_mobile, contact_home_phone, contact_phone, location_info,
-              skip_reminder, sf_status, same_day, sf_out_at, sf_in_at, cancelled_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
+              skip_reminder, sf_status, same_day, sf_out_at, sf_in_at, cancelled_at,
+              sf_window_start, sf_window_end)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
             [
               reservationId, req.franchiseId, batchId, sourceId, dockId, normalizedPhone,
               r.name || `Guest ${i + 1}`, r.email || "", r.service || "Reservation",
@@ -1252,7 +1258,7 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
               sameDayCallIn ? "confirmed" : (r.status || "unconfirmed"), r.channel || "sms", r.notes || "",
               r.memberMobile || "", r.contactMobile || "", r.contactHomePhone || "", r.contactPhone || "", r.locationInfo || "",
               skipReminder, r.sfStatus || null, sameDayCallIn, r.sfOutAt || null, r.sfInAt || null,
-              r.sfCancelledAt || null,
+              r.sfCancelledAt || null, r.windowStart || null, r.windowEnd || null,
             ]
           );
           added++;
@@ -1549,13 +1555,15 @@ const TEMPLATE_PLACEHOLDERS = [
 ];
 
 function templateValues(reservation, franchise) {
+  // Render in club-local time — the server runs in UTC, so leaving the
+  // timezone off would text members times four or five hours ahead.
   const dateObj = new Date(reservation.reservation_date || reservation.date);
-  const dateStr = dateObj.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  const timeStr = dateObj.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const dateStr = dateObj.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: CLUB_TZ });
+  const timeStr = dateObj.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: CLUB_TZ });
   const returnRaw = reservation.return_time || reservation.endTime;
   const returnObj = returnRaw ? new Date(returnRaw) : null;
   const returnStr = returnObj && !isNaN(returnObj.getTime())
-    ? returnObj.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+    ? returnObj.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: CLUB_TZ })
     : "";
   const timePhrase = returnStr ? `from ${timeStr} to ${returnStr}` : `at ${timeStr}`;
   const fullName = reservation.name || "there";
@@ -2030,17 +2038,24 @@ async function applyConfirm(reservation) {
 // staff to approve or reject. The customer gets a "we'll check" reply.
 async function flagTimeChangeRequest(reservation, hour, minute) {
   const start = new Date(reservation.reservation_date);
-  const requested = new Date(start);
-  requested.setHours(hour, minute, 0, 0);
-  const end = reservation.return_time ? new Date(reservation.return_time) : null;
-  const newTimeStr = requested.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  // Build the requested time as CLUB-LOCAL wall time on the reservation's
+  // day (setHours would use the server's clock, which runs UTC).
+  const etDate = start.toLocaleDateString("en-CA", { timeZone: CLUB_TZ });
+  const tzPart = new Intl.DateTimeFormat("en-US", { timeZone: CLUB_TZ, timeZoneName: "longOffset" })
+    .formatToParts(start).find((p) => p.type === "timeZoneName");
+  const offset = (tzPart && tzPart.value.replace("GMT", "")) || "-05:00";
+  const requested = new Date(`${etDate}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00${offset}`);
+  const newTimeStr = requested.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: CLUB_TZ });
 
-  // Within the member's existing window (requested arrival is at/after their
-  // booked start and at/before their end) → auto-apply. We move ONLY the
-  // start time; the end stays put. Anything outside the window (e.g. wanting
-  // to come in earlier than their slot opens) needs staff approval.
-  const withinWindow = end && !isNaN(end.getTime()) &&
-    requested.getTime() >= start.getTime() && requested.getTime() <= end.getTime();
+  // Auto-apply bounds: the BOOKED TIMEFRAME when we have it — that's what
+  // the member is entitled to (often a whole-day block), even if their
+  // planned arrival was later. Fall back to planned arrival→return. We move
+  // ONLY the arrival; anything outside the window needs staff approval.
+  const winStart = reservation.sf_window_start ? new Date(reservation.sf_window_start) : start;
+  const winEnd = reservation.sf_window_end ? new Date(reservation.sf_window_end)
+    : (reservation.return_time ? new Date(reservation.return_time) : null);
+  const withinWindow = winEnd && !isNaN(winEnd.getTime()) &&
+    requested.getTime() >= winStart.getTime() && requested.getTime() <= winEnd.getTime();
 
   if (withinWindow) {
     await db.query(

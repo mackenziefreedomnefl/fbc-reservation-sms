@@ -1127,6 +1127,20 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
             {endStr ? `${timeStr} – ${endStr}` : timeStr}
             {res.timeUpdated && <span style={{ fontSize: 9, marginLeft: 3 }}>⏱ updated</span>}
           </div>
+          {(() => {
+            // Booked timeframe (the PDTF slot) beneath the planned times —
+            // shown when it differs, so requests are easy to judge.
+            if (!res.windowStart || !res.windowEnd) return null;
+            const clk = (v) => new Date(v).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+            const ws = clk(res.windowStart), we = clk(res.windowEnd);
+            if (ws === timeStr && we === endStr) return null;
+            return (
+              <div title="Booked timeframe (what their reservation covers)" style={{
+                fontSize: 10, color: palette.muted, opacity: 0.85,
+                fontFamily: "'Open Sans', sans-serif",
+              }}>TF {ws} – {we}</div>
+            );
+          })()}
         </div>
 
         {/* Message Status & SMS */}
