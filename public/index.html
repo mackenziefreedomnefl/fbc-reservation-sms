@@ -1080,7 +1080,7 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
             fontSize: 13, color: palette.muted, marginTop: 2,
             fontFamily: "'Open Sans', sans-serif",
           }}>
-            {res.service} · {res.guests} guest{res.guests > 1 ? "s" : ""}
+            {res.service}
           </div>
         </div>
 
@@ -2680,7 +2680,7 @@ function BatchDetailDrawer({ batchId, onClose }) {
                       fontSize: 12, color: palette.muted, marginTop: 2,
                       fontFamily: "'Open Sans', sans-serif",
                     }}>
-                      {dateStr} {timeStr && `· ${timeStr}`} · {res.service || "Reservation"} · {res.guests || 1} guest{(res.guests || 1) === 1 ? "" : "s"}
+                      {dateStr} {timeStr && `· ${timeStr}`} · {res.service || "Reservation"}
                     </div>
                   </div>
                   <StatusBadge status={res.status || "unconfirmed"} />
