@@ -806,12 +806,21 @@ function TripBadge({ res }) {
   const toMs = (v) => (v instanceof Date ? v.getTime() : v ? new Date(v).getTime() : null);
   const start = toMs(res.date);
   const end = toMs(res.endTime);
+  const clock = (v) => {
+    const ms = toMs(v);
+    return ms ? new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : null;
+  };
+  const outStr = clock(res.sfOutAt);
+  const inStr = clock(res.sfInAt);
   let label = null, color = null, bg = null;
   if (sf === "On The Water") {
-    if (end && now > end + 15 * 60000) { label = "⚠ OVERDUE RETURN"; color = "#C0392B"; bg = "#FCE8EC"; }
-    else { label = "🌊 ON THE WATER"; color = "#1B6E8C"; bg = "#E3F0F5"; }
+    if (end && now > end + 15 * 60000) {
+      label = `⚠ OVERDUE${outStr ? ` · OUT ${outStr}` : " RETURN"}`; color = "#C0392B"; bg = "#FCE8EC";
+    } else {
+      label = `🌊 OUT${outStr ? ` ${outStr}` : " NOW"}`; color = "#1B6E8C"; bg = "#E3F0F5";
+    }
   } else if (sf === "Completed") {
-    label = "BACK IN"; color = palette.muted; bg = "#EEF1F5";
+    label = `BACK IN${inStr ? ` ${inStr}` : ""}`; color = palette.muted; bg = "#EEF1F5";
   } else if (sf === "Scheduled" && res.status !== "cancelled" &&
              start && now > start + 20 * 60000 && now - start < 12 * 3600000) {
     label = "⏱ LATE START"; color = palette.amber; bg = palette.amberLight;
