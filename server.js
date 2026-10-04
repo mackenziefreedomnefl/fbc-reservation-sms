@@ -2019,16 +2019,18 @@ const DOCK_PHONES = {
 // This line does exactly three things: confirm, cancel, change arrival
 // time. Everything else gets redirected to a phone call — no "someone will
 // follow up" promises (though staff still see the thread and the row flag).
+const DOCK_PHONE_LIST =
+  `• Jacksonville Beach: 904-562-8676\n` +
+  `• Julington Creek East: 904-625-1847\n` +
+  `• Julington Creek West (Pontoons Only): 904-874-6314\n` +
+  `• Camachee Cove: 904-562-8842\n` +
+  `• St. Augustine Shipyard: 904-710-1358`;
 const HANDOFF_PREFIX = "This line is just for confirming, canceling, or changing arrival times";
 function handoffResponse() {
   return (
     `${HANDOFF_PREFIX} on existing reservations. For anything else — same-day bookings, ` +
     `boat type changes, new reservations, or questions — please give the dock a call:\n` +
-    `• Jacksonville Beach: 904-562-8676\n` +
-    `• Julington Creek East: 904-625-1847\n` +
-    `• Julington Creek West (Pontoons Only): 904-874-6314\n` +
-    `• Camachee Cove: 904-562-8842\n` +
-    `• St. Augustine Shipyard: 904-710-1358`
+    DOCK_PHONE_LIST
   );
 }
 // Member says they're late but gave no time — the one thing the bot can fix
@@ -2038,7 +2040,8 @@ const RUNNING_LATE_RESPONSE =
   "Reply with a new arrival time (like \"10:30 AM\") and we'll update your reservation.";
 const ROBOTIC_FALLBACK =
   "Sorry, I didn't catch that! Reply YES to confirm your reservation, NO to cancel, " +
-  "or a new arrival time like \"9:30\". For anything else, please call your dock.";
+  "or a new arrival time like \"9:30\".\n\nFor anything else, please call the dock:\n" +
+  DOCK_PHONE_LIST;
 
 async function applyCancel(reservation) {
   await db.query(
