@@ -2072,58 +2072,22 @@ const DOCK_PHONES = {
 // This line does exactly three things: confirm, cancel, change arrival
 // time. Everything else gets redirected to a phone call — no "someone will
 // follow up" promises (though staff still see the thread and the row flag).
-const DOCK_PHONE_LIST =
-  `• Jacksonville Beach: 904-562-8676\n` +
-  `• Julington Creek East: 904-625-1847\n` +
-  `• Julington Creek West (Pontoons Only): 904-874-6314\n` +
-  `• Camachee Cove: 904-562-8842\n` +
-  `• St. Augustine Shipyard: 904-710-1358`;
-// NOAA point forecasts per dock + the Jacksonville marine page. Weather
-// questions get these links — no promises, the dock makes the call.
-const DOCK_WEATHER_LINKS = {
-  "jax-beach": "https://forecast.weather.gov/MapClick.php?lat=30.287&lon=-81.393",
-  "julington-east": "https://forecast.weather.gov/MapClick.php?lat=30.134&lon=-81.632",
-  "julington-west": "https://forecast.weather.gov/MapClick.php?lat=30.134&lon=-81.632",
-  "camachee-cove": "https://forecast.weather.gov/MapClick.php?lat=29.925&lon=-81.300",
-  "shipyard": "https://forecast.weather.gov/MapClick.php?lat=29.881&lon=-81.310",
-};
-const MARINE_FORECAST_LINK = "https://www.weather.gov/jax/marine";
-function weatherResponse(reservation) {
-  const dockLink = reservation && DOCK_WEATHER_LINKS[reservation.dock_id];
-  return (
-    "Great question — here's where to check:\n" +
-    (dockLink ? `• Local forecast: ${dockLink}\n` : "") +
-    `• Marine conditions: ${MARINE_FORECAST_LINK}\n\n` +
-    "The dock makes the final weather call. If we need to delay or close, we'll text you."
-  );
-}
 
-const HANDOFF_PREFIX = "This line is just for confirming, canceling, or changing arrival times";
-// Conservative two-step: ask which location, then hand over that dock's
-// number (see the location-name branch in parseAndApplyReply).
-function handoffResponse() {
-  return (
-    `${HANDOFF_PREFIX} on existing reservations. For anything else — same-day bookings, ` +
-    `boat type changes, new reservations, or questions — it's best to call the dock directly.\n\n` +
-    `Which location are you boating with? Reply: Jax Beach, Julington East, Julington West, Camachee, or Shipyard.`
-  );
-}
-const DOCK_CALL_RESPONSES = {
-  "jax-beach": "Jacksonville Beach: 904-562-8676 — give them a call and they'll take care of you!",
-  "julington-east": "Julington Creek East: 904-625-1847 — give them a call and they'll take care of you!",
-  "julington-west": "Julington Creek West (Pontoons Only): 904-874-6314 — give them a call and they'll take care of you!",
-  "camachee-cove": "Camachee Cove: 904-562-8842 — give them a call and they'll take care of you!",
-  "shipyard": "St. Augustine Shipyard: 904-710-1358 — give them a call and they'll take care of you!",
-};
+// The ONE off-script response. This is strictly a confirmation line.
+const OFF_SCRIPT_RESPONSE =
+  "This line is just for confirming, canceling, or changing arrival times on existing " +
+  "reservations. Reply YES to confirm, NO to cancel, or a new arrival time like \"9:30\".\n\n" +
+  "For anything else, please call the dock:\n" +
+  "• Jacksonville Beach: 904-562-8676\n" +
+  "• Julington Creek East: 904-625-1847\n" +
+  "• Julington Creek West (Pontoons Only): 904-874-6314\n" +
+  "• Camachee Cove: 904-562-8842\n" +
+  "• St. Augustine Shipyard: 904-710-1358";
 // Member says they're late but gave no time — the one thing the bot can fix
 // on its own is the arrival time, so ask for it instead of handing off.
 const RUNNING_LATE_RESPONSE =
   "No problem — thanks for the heads up! What time should we expect you? " +
   "Reply with a new arrival time (like \"10:30 AM\") and we'll update your reservation.";
-const ROBOTIC_FALLBACK =
-  "Sorry, I didn't catch that! Reply YES to confirm your reservation, NO to cancel, " +
-  "or a new arrival time like \"9:30\".\n\nFor anything else, please call the dock:\n" +
-  DOCK_PHONE_LIST;
 
 async function applyCancel(reservation) {
   await db.query(
@@ -2270,33 +2234,14 @@ async function parseAndApplyReply(inboundText, reservation) {
     if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return flagTimeChangeRequest(reservation, h, m);
   }
   if (confirmLoose.test(replyLower)) return applyConfirm(reservation);
-  if (/(weather|forecast|wind|windy|gust|rain|storm|chop|choppy|rough|seas|small craft|advisory)/.test(replyLower)) {
-    return weatherResponse(reservation);
-  }
-  // Moving to a DIFFERENT DAY isn't something this line can do — only
-  // same-day arrival times. Send them to the dock.
-  if (/(change|move|switch|reschedul\w*|push)\b.{0,40}\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|another day|different day|next week)/.test(replyLower) ||
-      /\breschedule\b/.test(replyLower)) {
-    return handoffResponse();
-  }
   if (/(running late|gonna be late|going to be late|be a (little|bit) late|bit behind|behind schedule|stuck in traffic|push (it )?back|be there later|come later|little later)/.test(replyLower)) {
     return RUNNING_LATE_RESPONSE;
   }
-  // Location-name reply (answering "which location are you boating with?")
-  // → that dock's phone number. St. Augustine alone is ambiguous — two docks.
-  if (/julington.*west|jul.*w\b|pontoon/.test(replyLower)) return DOCK_CALL_RESPONSES["julington-west"];
-  if (/julington/.test(replyLower)) return DOCK_CALL_RESPONSES["julington-east"];
-  if (/camachee/.test(replyLower)) return DOCK_CALL_RESPONSES["camachee-cove"];
-  if (/shipyard/.test(replyLower)) return DOCK_CALL_RESPONSES["shipyard"];
-  if (/jax|jacksonville/.test(replyLower)) return DOCK_CALL_RESPONSES["jax-beach"];
-  if (/st ?aug/.test(replyLower)) {
-    return "St. Augustine has two locations — Camachee Cove: 904-562-8842, or St. Augustine Shipyard: 904-710-1358. They'll take care of you!";
-  }
-  if (handoffOrInquiry.test(replyLower) || inboundText.includes("?")) {
-    return handoffResponse();
-  }
 
-  return ROBOTIC_FALLBACK;
+  // Confirmation line ONLY (her call, 10/4): anything off-script — weather,
+  // questions, day changes, boat changes, anything — gets the one standard
+  // response. No cleverness.
+  return OFF_SCRIPT_RESPONSE;
 }
 
 // --- Twilio inbound webhook ---
@@ -2352,7 +2297,7 @@ app.post("/api/sms/incoming", express.urlencoded({ extended: false }), async (re
     responseText = await parseAndApplyReply(inboundText, activeReservation);
 
     // Bot punted to a human — flag the row so dock staff see it needs them.
-    if (activeReservation && responseText && (responseText.startsWith(HANDOFF_PREFIX) || responseText === ROBOTIC_FALLBACK)) {
+    if (activeReservation && responseText === OFF_SCRIPT_RESPONSE) {
       await db.query(
         `UPDATE reservations SET needs_attention = TRUE WHERE id = $1`,
         [activeReservation.id]
