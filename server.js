@@ -2137,12 +2137,19 @@ async function flagTimeChangeRequest(reservation, hour, minute) {
 }
 
 async function parseAndApplyReply(inboundText, reservation) {
-  const replyLower = inboundText.toLowerCase().replace(/[^a-z0-9\s:]/g, "").trim();
+  // Apostrophes vanish ("I'm"→"im", "won't"→"wont"); other punctuation
+  // becomes a SPACE so "9-10am" reads "9 10am", not "910am" — members text
+  // contractions and dash ranges constantly.
+  const replyLower = inboundText.toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9\s:]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   const confirmPatterns = /^(confirm|confirmed|yes|yep|yeah|yea|yup|y|c|ok|okay|sure|sounds good|good|great|absolutely|perfect|see you there|will be there|we will be there|ill be there|looking forward|affirmative)$/;
   const confirmLoose = /(confirm|yes|yep|yeah|yup|sounds good|okay|ok sure|absolutely|perfect|see you (there|soon|then|at)|will be there|looking forward|count me in|im in|we're in|all good|good to go)/;
   const cancelPatterns = /^(cancel|cancelled|no|nope|nah|n|cant make it|can not make it|cannot make it|wont be there|not coming|count me out|remove|pass)$/;
-  const cancelLoose = /(cancel|cant make it|can not make it|cannot make it|wont be there|not coming|count me out|need to cancel|want to cancel|have to cancel|please cancel)/;
+  const cancelLoose = /(cancel|cant make it|can not make it|cannot make it|wont be there|not coming|count me out|wont( be able to)? make it|will not( be able to)? make it|unable to make it|not( be)? able to make it)/;
   const timeMatch = replyLower.match(
     /(?:time|change.*time|move.*to|reschedule.*to|change.*to|switch.*to|make it|new time)?\s*(\d{1,2}):?(\d{2})?\s*(am|pm)/i
   );
@@ -2154,8 +2161,9 @@ async function parseAndApplyReply(inboundText, reservation) {
     // The whole message is just a number — "11", "930", "9 30": on this
     // line, a bare number means an arrival time.
     replyLower.match(/^\s*(\d{1,2})\s?(\d{2})?\s*$/) ||
-    // With arrival context: "coming at 930", "eta 10"
-    replyLower.match(/(?:arriv\w+|coming|be there|eta|around|make it|move to|updat\w+(?: to)?|\bat)\s+(\d{1,2}):?(\d{2})?\b/)
+    // With arrival/correction context: "coming at 930", "eta 10",
+    // "actually 1045", "make that 11"
+    replyLower.match(/(?:arriv\w+|coming|be there|eta|around|actually|instead|make (?:it|that)|move to|updat\w+(?: to)?|\bat)\s+(\d{1,2}):?(\d{2})?\b/)
   );
   const namedTime = /\bnoon\b/.test(replyLower) ? { h: 12, m: 0 }
     : /\bmidnight\b/.test(replyLower) ? { h: 0, m: 0 } : null;
@@ -2174,7 +2182,9 @@ async function parseAndApplyReply(inboundText, reservation) {
   // Pleasantries and bare emoji end the thread gracefully — no auto-reply
   // at all (returning null sends nothing), never "sorry I didn't catch that".
   if (replyLower === "" ||
-      /^(ok |okay |great |perfect |awesome )?(thanks|thank you|thank u|thanks so much|thank you so much|thanks a lot|thx|ty|tysm|got it|gotcha|appreciate it|much appreciated|no problem|np|will do|you too|have a good (day|one|weekend))[!. ]*$/.test(replyLower)) {
+      /^(ok |okay |great |perfect |awesome )?(thanks|thank you|thank u|thanks so much|thank you so much|thanks a lot|thx|ty|tysm|got it|gotcha|appreciate it|much appreciated|no problem|np|will do|you too|have a good (day|one|weekend))[!. ]*$/.test(replyLower) ||
+      // Apology follow-ups after a cancel ("I am sorry for the short notice")
+      /^(i am |im |we are |were )?(so |really |very )?sorry( for| about)?( the| that| this)?( short)?( notice)?[!. ]*$/.test(replyLower)) {
     return null;
   }
 
@@ -2193,14 +2203,15 @@ async function parseAndApplyReply(inboundText, reservation) {
     return applyConfirm(reservation);
   }
   if (cancelLoose.test(replyLower)) return applyCancel(reservation);
-  if (confirmLoose.test(replyLower)) return applyConfirm(reservation);
+  // A time beats a loose confirm: "Yes. 11am pick up" should RECORD 11am —
+  // applying the time also confirms them, so nothing is lost.
   if (timeMatch) {
     let h = parseInt(timeMatch[1]);
     const m = parseInt(timeMatch[2] || "0");
     const ampm = timeMatch[3];
     if (ampm && ampm.toLowerCase() === "pm" && h < 12) h += 12;
     if (ampm && ampm.toLowerCase() === "am" && h === 12) h = 0;
-    return flagTimeChangeRequest(reservation, h, m);
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return flagTimeChangeRequest(reservation, h, m);
   }
   if (namedTime) return flagTimeChangeRequest(reservation, namedTime.h, namedTime.m);
   if (bareTime) {
@@ -2209,6 +2220,7 @@ async function parseAndApplyReply(inboundText, reservation) {
     if (h >= 1 && h <= 6) h += 12; // "5" on a boat dock means 5 PM
     if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return flagTimeChangeRequest(reservation, h, m);
   }
+  if (confirmLoose.test(replyLower)) return applyConfirm(reservation);
   if (/(running late|gonna be late|going to be late|be a (little|bit) late|bit behind|behind schedule|stuck in traffic|push (it )?back|be there later|come later|little later)/.test(replyLower)) {
     return RUNNING_LATE_RESPONSE;
   }
