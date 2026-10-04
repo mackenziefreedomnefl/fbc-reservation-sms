@@ -1663,8 +1663,17 @@ function fillTemplateFor(template, r, dockName) {
 }
 
 const FOLLOWUP_TEMPLATE =
-  "Hi {first_name}! Just following up — can you make your reservation on {date} {time_phrase}? " +
+  "Hi {first_name}! Just following up — can you make your reservation at {dock} on {date} {time_phrase}? " +
   "Reply YES to confirm, NO to cancel, or send a new arrival time.";
+
+// Dock names as they should read in member texts (mirrors the server map).
+const DOCK_TEXT_NAMES = {
+  "jax-beach": "Jacksonville Beach",
+  "julington-east": "Julington Creek East",
+  "julington-west": "Julington Creek West",
+  "camachee-cove": "Camachee Cove",
+  "shipyard": "St. Augustine Shipyard",
+};
 
 function SmsComposeModal({ compose, reservations, dockName, dispatch, onSend }) {
   const { id, mode, resend } = compose;
@@ -5143,7 +5152,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
         <SmsComposeModal
           compose={state.smsCompose}
           reservations={state.reservations}
-          dockName={DOCKS.find((d) => d.id === state.currentDock)?.name || ""}
+          dockName={DOCK_TEXT_NAMES[state.currentDock] || DOCKS.find((d) => d.id === state.currentDock)?.name || ""}
           dispatch={dispatch}
           onSend={liveDispatch}
         />

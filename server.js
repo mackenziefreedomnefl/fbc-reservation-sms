@@ -1562,7 +1562,7 @@ app.post("/api/reservations/:id/reject-time-change", requireAuth, requireFranchi
 // The default confirmation text, also shown as the starting point in the
 // template editor. Keep {placeholders} in sync with TEMPLATE_PLACEHOLDERS.
 const DEFAULT_MESSAGE_TEMPLATE =
-  "Hi {first_name}! This is a reminder about your upcoming {timeframe} reservation on {date} {time_phrase}.\n\n" +
+  "Hi {first_name}! This is a reminder about your upcoming {timeframe} reservation at {dock} on {date} {time_phrase}.\n\n" +
   "Can you make it? Reply YES to confirm and NO to cancel, or send a new time (e.g. 7:30 AM) if you need to change your arrival.";
 
 const TEMPLATE_PLACEHOLDERS = [
@@ -1605,7 +1605,8 @@ function templateValues(reservation, franchise) {
   // Employee contacts are prefixed "(E) Jane Doe" — texts should say Jane,
   // not "(E)".
   const fullName = (reservation.name || "there").replace(/^\([^)]*\)\s*/, "") || "there";
-  const dockName = (franchise && franchise.docks && (franchise.docks.find((d) => d.id === reservation.dock_id) || {}).name)
+  const dockName = DOCK_DISPLAY_NAMES[reservation.dock_id]
+    || (franchise && franchise.docks && (franchise.docks.find((d) => d.id === reservation.dock_id) || {}).name)
     || reservation.dock_id || "";
   return {
     "{first_name}": fullName.split(" ")[0],
