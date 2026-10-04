@@ -988,6 +988,7 @@ function rowToReservation(r) {
     sfInAt: r.sf_in_at || null,
     cancelledAt: r.cancelled_at || null,
     needsAttention: !!r.needs_attention,
+    noReplyShow: !!r.no_reply_show,
     windowStart: r.sf_window_start || null,
     windowEnd: r.sf_window_end || null,
     timeframeName: r.sf_timeframe || "",
@@ -1234,6 +1235,16 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
             ]
           );
           updated++;
+          // They checked out without ever answering the text — showing up IS
+          // the confirmation. Flag it so staff can see who skips replying.
+          if ((sfStatus === "on the water" || sfStatus === "completed") &&
+              (match.status === "pending" || match.status === "unconfirmed")) {
+            await c.query(
+              `UPDATE reservations SET status = 'confirmed', no_reply_show = TRUE
+               WHERE id = $1 AND franchise_id = $2`,
+              [match.id, req.franchiseId]
+            );
+          }
           if (sfCancelled && match.status !== "cancelled") {
             await c.query(
               `UPDATE reservations SET status = 'cancelled',

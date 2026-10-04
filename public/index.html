@@ -878,6 +878,18 @@ function shortTimeframe(name) {
   return name;
 }
 
+// Checked out without replying to the confirmation text — auto-confirmed.
+function NoReplyShowBadge({ res }) {
+  if (!res.noReplyShow) return null;
+  return (
+    <span title="Never replied to the confirmation text, but checked out — auto-confirmed" style={{
+      fontSize: 11, padding: "3px 8px", borderRadius: 6,
+      background: "#EEF1F5", color: palette.muted, fontWeight: 700,
+      whiteSpace: "nowrap", fontFamily: "'Open Sans', sans-serif",
+    }}>SHOWED · NO REPLY</span>
+  );
+}
+
 // Same-day call-in tag — booked today for today, auto-confirmed on import.
 function SameDayBadge({ res }) {
   if (!res.sameDay) return null;
@@ -1233,6 +1245,7 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
           )}
           <AttentionBadge res={res} />
           <SameDayBadge res={res} />
+          <NoReplyShowBadge res={res} />
           <TripBadge res={res} />
           <StatusBadge status={res.status} />
           <CancelledAtNote res={res} />
@@ -1874,6 +1887,7 @@ function SmsDrawer({ reservation, dispatch }) {
         </div>
         <AttentionBadge res={res} />
         <SameDayBadge res={res} />
+        <NoReplyShowBadge res={res} />
         <TripBadge res={res} />
         <StatusBadge status={res.status} />
         <CancelledAtNote res={res} />
