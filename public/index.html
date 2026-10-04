@@ -2067,35 +2067,6 @@ function SmsDrawer({ reservation, dispatch }) {
         )}
       </div>
 
-      {/* Quick Reply Chips */}
-      {res.messageSent && (
-        <div style={{
-          padding: "10px 16px 4px", background: palette.card,
-          borderTop: `1px solid ${palette.border}`,
-          display: "flex", gap: 6, flexWrap: "wrap", flexShrink: 0,
-        }}>
-          <div style={{ fontSize: 10, color: palette.muted, fontFamily: "'Open Sans', sans-serif", width: "100%", marginBottom: 2 }}>
-            Quick replies:
-          </div>
-          {["CONFIRM", "CANCEL", "TIME 7:30 PM", "TIME 6:00 PM"].map((chip) => (
-            <button
-              key={chip}
-              onClick={() => {
-                dispatch({ type: "SIMULATE_REPLY", payload: { id: res.id, reply: chip } });
-              }}
-              style={{
-                padding: "6px 12px", borderRadius: 20,
-                border: `1.5px solid ${chip === "CONFIRM" ? palette.green : chip === "CANCEL" ? palette.red : palette.blue}`,
-                background: "transparent",
-                color: chip === "CONFIRM" ? palette.green : chip === "CANCEL" ? palette.red : palette.blue,
-                fontSize: 11, fontWeight: 600, cursor: "pointer",
-                fontFamily: "'Open Sans', sans-serif", transition: "all 0.15s",
-              }}
-            >{chip}</button>
-          ))}
-        </div>
-      )}
-
       {/* Reply Input */}
       {res.messageSent && (
         <div style={{
