@@ -878,6 +878,34 @@ function shortTimeframe(name) {
   return name;
 }
 
+// Twilio told us the last real send failed — looks like "No Reply" but the
+// member never got the text (bad number or landline).
+function DeliveryBadge({ res }) {
+  const sent = (res.smsLog || []).filter((m) => m.from === "system" && m.twilioStatus);
+  const last = sent[sent.length - 1];
+  if (!last || !/failed|undelivered/i.test(last.twilioStatus)) return null;
+  return (
+    <span title="The last text to this number failed to deliver — likely a landline or bad number. Call them instead." style={{
+      fontSize: 11, padding: "3px 8px", borderRadius: 6,
+      background: "#FCE8EC", color: "#C0392B", fontWeight: 700,
+      whiteSpace: "nowrap", fontFamily: "'Open Sans', sans-serif",
+      border: "1px solid #C0392B40",
+    }}>⚠ NOT DELIVERED</span>
+  );
+}
+
+// No phone number on their Salesforce contact — can't be texted at all.
+function NoPhoneBadge({ res }) {
+  if (res.phone) return null;
+  return (
+    <span title="No phone number on their Salesforce contact — add one there and it syncs within minutes" style={{
+      fontSize: 11, padding: "3px 8px", borderRadius: 6,
+      background: "#FCE8EC", color: "#C0392B", fontWeight: 700,
+      whiteSpace: "nowrap", fontFamily: "'Open Sans', sans-serif",
+    }}>NO PHONE</span>
+  );
+}
+
 // Checked out without replying to the confirmation text — auto-confirmed.
 function NoReplyShowBadge({ res }) {
   if (!res.noReplyShow) return null;
@@ -1262,6 +1290,8 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
           }}>⏰ TIME CHANGE</span>
         )}
         <AttentionBadge res={res} />
+        <NoPhoneBadge res={res} />
+        <DeliveryBadge res={res} />
         <SameDayBadge res={res} />
         <NoReplyShowBadge res={res} />
         <TripBadge res={res} />
@@ -1937,6 +1967,8 @@ function SmsDrawer({ reservation, dispatch }) {
           <div style={{ fontSize: 11, color: palette.muted, fontFamily: "'Open Sans', sans-serif" }}>{res.phone || "No phone number"}</div>
         </div>
         <AttentionBadge res={res} />
+        <NoPhoneBadge res={res} />
+        <DeliveryBadge res={res} />
         <SameDayBadge res={res} />
         <NoReplyShowBadge res={res} />
         <TripBadge res={res} />
@@ -4416,6 +4448,8 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
   };
 
   const unsent = state.reservations.filter((r) => !r.messageSent && !r.skipReminder).length;
+  const noPhoneCount = state.reservations.filter((r) => !r.phone && r.status !== "cancelled").length;
+  const attentionCount = state.reservations.filter((r) => r.needsAttention).length;
 
   // Helper to refresh data from server
   const refreshFromServer = async () => {
@@ -4868,8 +4902,10 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
               items={[
               { label: "Total", value: counts.all, color: palette.dark },
               { label: "Confirmed", value: counts.confirmed, sub: counts.all > 0 ? `${((counts.confirmed / counts.all) * 100).toFixed(0)}%` : null, color: palette.green },
-              { label: "Pending", value: counts.pending, color: palette.amber },
+              { label: "No Reply", value: counts.pending, color: palette.amber },
               { label: "Unsent", value: unsent, color: palette.red },
+              ...(noPhoneCount > 0 ? [{ label: "No Phone", value: noPhoneCount, color: "#C0392B" }] : []),
+              ...(attentionCount > 0 ? [{ label: "📣 Attention", value: attentionCount, color: "#C0392B" }] : []),
             ]} />
             {pullMsg && (
               <div style={{
