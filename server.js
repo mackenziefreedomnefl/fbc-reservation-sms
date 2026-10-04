@@ -2233,6 +2233,14 @@ async function parseAndApplyReply(inboundText, reservation) {
     if (h >= 1 && h <= 6) h += 12; // "5" on a boat dock means 5 PM
     if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return flagTimeChangeRequest(reservation, h, m);
   }
+  // Deferral — "will confirm in the morning", "let you know tonight",
+  // "need to check with my wife". NOT a confirmation: leave them No Reply
+  // and tell them how to close the loop.
+  if (/\b(will|ill|gonna|going to|cant|can not|cannot|not able to) confirm\b/.test(replyLower) ||
+      /\bconfirm (later|tonight|tomorrow|soon|in the (morning|am)|this (morning|evening|afternoon))\b/.test(replyLower) ||
+      /\b(let (you|yall|u) know|get back to (you|yall|u)|not sure yet|dont know yet|need to check|have to check|checking with)\b/.test(replyLower)) {
+    return "No problem! Just reply YES to confirm or NO to cancel whenever you know.";
+  }
   if (confirmLoose.test(replyLower)) return applyConfirm(reservation);
   if (/(running late|gonna be late|going to be late|be a (little|bit) late|bit behind|behind schedule|stuck in traffic|push (it )?back|be there later|come later|little later)/.test(replyLower)) {
     return RUNNING_LATE_RESPONSE;
