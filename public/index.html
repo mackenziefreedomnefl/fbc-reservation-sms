@@ -1536,9 +1536,10 @@ function fillTemplateFor(template, r, dockName) {
   const dateStr = d ? d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : "";
   const timeStr = d ? d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
   const endStr = end && !isNaN(end.getTime()) ? end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+  const cleanName = (r.name || "there").replace(/^\([^)]*\)\s*/, "") || "there";
   const vals = {
-    "{first_name}": (r.name || "there").split(" ")[0],
-    "{name}": r.name || "",
+    "{first_name}": cleanName.split(" ")[0],
+    "{name}": cleanName,
     "{boat}": r.service || "reservation",
     "{date}": dateStr,
     "{time}": timeStr,

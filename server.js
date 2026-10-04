@@ -1599,7 +1599,9 @@ function templateValues(reservation, franchise) {
     ? returnObj.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: CLUB_TZ })
     : "";
   const timePhrase = returnStr ? `from ${timeStr} to ${returnStr}` : `at ${timeStr}`;
-  const fullName = reservation.name || "there";
+  // Employee contacts are prefixed "(E) Jane Doe" — texts should say Jane,
+  // not "(E)".
+  const fullName = (reservation.name || "there").replace(/^\([^)]*\)\s*/, "") || "there";
   const dockName = (franchise && franchise.docks && (franchise.docks.find((d) => d.id === reservation.dock_id) || {}).name)
     || reservation.dock_id || "";
   return {
