@@ -864,6 +864,37 @@ function CancelledAtNote({ res }) {
   );
 }
 
+// Pre-made STAFF replies — tapping fills the reply box (editable, never
+// auto-sent). Used in both the reservation SMS drawer and Conversations.
+const STAFF_QUICK_REPLIES = [
+  "You're all set — see you then!",
+  "Got it — we've updated your reservation.",
+  "No problem, thanks for letting us know!",
+  "Someone from the dock will give you a call shortly.",
+  "Best to give the dock a call and they'll take care of you.",
+];
+
+function StaffQuickReplies({ onPick }) {
+  return (
+    <div style={{
+      padding: "8px 16px 0", background: palette.card,
+      borderTop: `1px solid ${palette.border}`,
+      display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch",
+    }}>
+      {STAFF_QUICK_REPLIES.map((t) => (
+        <button key={t} onClick={() => onPick(t)}
+          title="Fills the reply box — edit before sending"
+          style={{
+            padding: "6px 12px", borderRadius: 16, whiteSpace: "nowrap", flexShrink: 0,
+            border: `1.5px solid ${palette.border}`, background: "#F0F4F8",
+            color: palette.dark, fontSize: 11, fontWeight: 600, cursor: "pointer",
+            fontFamily: "'Open Sans', sans-serif",
+          }}>{t.length > 38 ? t.slice(0, 36) + "…" : t}</button>
+      ))}
+    </div>
+  );
+}
+
 // Collapse seasonal timeframe names ("Fall Weekend - Morning") to the part
 // staff care about. Unrecognized names show as-is.
 function shortTimeframe(name) {
@@ -2066,6 +2097,8 @@ function SmsDrawer({ reservation, dispatch }) {
           ))
         )}
       </div>
+
+      {res.messageSent && <StaffQuickReplies onPick={(t) => setReplyText(t)} />}
 
       {/* Reply Input */}
       {res.messageSent && (
@@ -3989,6 +4022,7 @@ function ConversationDrawer({ phone, onClose }) {
       )}
 
       {/* Reply composer */}
+      <StaffQuickReplies onPick={(t) => setReplyText(t)} />
       <div style={{
         padding: "12px 14px", background: palette.card,
         borderTop: `1px solid ${palette.border}`, flexShrink: 0,
