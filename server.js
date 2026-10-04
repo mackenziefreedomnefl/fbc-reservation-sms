@@ -2157,6 +2157,13 @@ async function parseAndApplyReply(inboundText, reservation) {
       "• St. Augustine Shipyard: 904-710-1358";
   }
 
+  // Pleasantries and bare emoji end the thread gracefully — no auto-reply
+  // at all (returning null sends nothing), never "sorry I didn't catch that".
+  if (replyLower === "" ||
+      /^(ok |okay |great |perfect |awesome )?(thanks|thank you|thank u|thanks so much|thank you so much|thanks a lot|thx|ty|tysm|got it|gotcha|appreciate it|much appreciated|no problem|np|will do|you too|have a good (day|one|weekend))[!. ]*$/.test(replyLower)) {
+    return null;
+  }
+
   // Tier 1 — strict patterns. Catches the common short replies instantly.
   if (cancelPatterns.test(replyLower)) return applyCancel(reservation);
   if (confirmPatterns.test(replyLower)) return applyConfirm(reservation);
@@ -2251,19 +2258,21 @@ app.post("/api/sms/incoming", express.urlencoded({ extended: false }), async (re
     responseText = await parseAndApplyReply(inboundText, activeReservation);
 
     // Bot punted to a human — flag the row so dock staff see it needs them.
-    if (activeReservation && (responseText.startsWith(HANDOFF_PREFIX) || responseText === ROBOTIC_FALLBACK)) {
+    if (activeReservation && responseText && (responseText.startsWith(HANDOFF_PREFIX) || responseText === ROBOTIC_FALLBACK)) {
       await db.query(
         `UPDATE reservations SET needs_attention = TRUE WHERE id = $1`,
         [activeReservation.id]
       );
     }
 
-    await db.query(
-      `INSERT INTO messages (franchise_id, phone, reservation_id, dock_id, direction, body)
-       VALUES ($1,$2,$3,$4,'out',$5)`,
-      [franchise.id, normalizedFrom, reservation ? reservation.id : null,
-       reservation ? reservation.dock_id : null, responseText]
-    );
+    if (responseText) {
+      await db.query(
+        `INSERT INTO messages (franchise_id, phone, reservation_id, dock_id, direction, body)
+         VALUES ($1,$2,$3,$4,'out',$5)`,
+        [franchise.id, normalizedFrom, reservation ? reservation.id : null,
+         reservation ? reservation.dock_id : null, responseText]
+      );
+    }
 
     // Fire-and-forget push to relevant staff devices. Admins always get it;
     // franchise_staff only get it if the reservation's dock matches theirs.
@@ -2284,7 +2293,7 @@ app.post("/api/sms/incoming", express.urlencoded({ extended: false }), async (re
   }
 
   const twiml = new twilio.twiml.MessagingResponse();
-  twiml.message(responseText);
+  if (responseText) twiml.message(responseText);
   res.type("text/xml").send(twiml.toString());
 });
 
