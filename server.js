@@ -2167,7 +2167,7 @@ async function parseAndApplyReply(inboundText, reservation) {
     .trim();
 
   const confirmPatterns = /^(confirm|confirmed|yes|yep|yeah|yea|yup|y|c|ok|okay|sure|sounds good|good|great|absolutely|perfect|see you there|will be there|we will be there|ill be there|looking forward|affirmative)$/;
-  const confirmLoose = /(confirm|yes|yep|yeah|yup|sounds good|okay|ok sure|absolutely|perfect|see you (there|soon|then|at)|will be there|looking forward|count me in|im in|we're in|all good|good to go)/;
+  const confirmLoose = /(confirm|yes|yep|yeah|yup|sounds good|okay|ok sure|absolutely|perfect|see you (there|soon|then|at|tomorrow|in the (am|morning))|will be there|looking forward|count me in|im in|were in|all good|good to go)/;
   const cancelPatterns = /^(cancel|cancelled|no|nope|nah|n|cant make it|can not make it|cannot make it|wont be there|not coming|count me out|remove|pass)$/;
   const cancelLoose = /(cancel|cant make it|can not make it|cannot make it|wont be there|not coming|count me out|wont( be able to)? make it|will not( be able to)? make it|unable to make it|not( be)? able to make it)/;
   const timeMatch = replyLower.match(
@@ -2243,6 +2243,12 @@ async function parseAndApplyReply(inboundText, reservation) {
   if (confirmLoose.test(replyLower)) return applyConfirm(reservation);
   if (/(weather|forecast|wind|windy|gust|rain|storm|chop|choppy|rough|seas|small craft|advisory)/.test(replyLower)) {
     return weatherResponse(reservation);
+  }
+  // Moving to a DIFFERENT DAY isn't something this line can do — only
+  // same-day arrival times. Send them to the dock.
+  if (/(change|move|switch|reschedul\w*|push)\b.{0,40}\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|another day|different day|next week)/.test(replyLower) ||
+      /\breschedule\b/.test(replyLower)) {
+    return handoffResponse();
   }
   if (/(running late|gonna be late|going to be late|be a (little|bit) late|bit behind|behind schedule|stuck in traffic|push (it )?back|be there later|come later|little later)/.test(replyLower)) {
     return RUNNING_LATE_RESPONSE;
