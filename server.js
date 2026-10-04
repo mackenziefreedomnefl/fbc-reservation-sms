@@ -1548,7 +1548,7 @@ app.post("/api/reservations/:id/reject-time-change", requireAuth, requireFranchi
 // The default confirmation text, also shown as the starting point in the
 // template editor. Keep {placeholders} in sync with TEMPLATE_PLACEHOLDERS.
 const DEFAULT_MESSAGE_TEMPLATE =
-  "Hi {first_name}! This is a reminder about your upcoming reservation on {date} {time_phrase}.\n\n" +
+  "Hi {first_name}! This is a reminder about your upcoming {timeframe} reservation on {date} {time_phrase}.\n\n" +
   "Can you make it? Reply YES to confirm and NO to cancel, or send a new time (e.g. 7:30 AM) if you need to change your arrival.";
 
 const TEMPLATE_PLACEHOLDERS = [
@@ -1559,8 +1559,22 @@ const TEMPLATE_PLACEHOLDERS = [
   { token: "{time}", label: "Start time" },
   { token: "{return_time}", label: "Return time" },
   { token: "{time_phrase}", label: "\"at 8:00 AM\" or \"from 8 to 1\"" },
+  { token: "{timeframe}", label: "Booked timeframe (Morning / Full Day)" },
   { token: "{dock}", label: "Dock name" },
 ];
+
+// Mirror of the UI's shortTimeframe(): collapse seasonal names to the class.
+function shortTimeframeLabel(name) {
+  const n = (name || "").toLowerCase();
+  if (!n) return "";
+  if (n.includes("full day early return")) return "Full Day (Early Return)";
+  if (n.includes("full day")) return "Full Day";
+  if (n.includes("morning")) return "Morning";
+  if (n.includes("afternoon")) return "Afternoon";
+  if (n.includes("evening")) return "Evening";
+  if (n.includes("open hours")) return "Open Hours";
+  return name;
+}
 
 function templateValues(reservation, franchise) {
   // Render in club-local time — the server runs in UTC, so leaving the
@@ -1585,6 +1599,7 @@ function templateValues(reservation, franchise) {
     "{time}": timeStr,
     "{return_time}": returnStr,
     "{time_phrase}": timePhrase,
+    "{timeframe}": shortTimeframeLabel(reservation.sf_timeframe || reservation.timeframeName),
     "{dock}": dockName,
   };
 }
@@ -2667,6 +2682,7 @@ app.post("/api/message-template/preview", requireAuth, requireFranchiseContext, 
     name: "Jordan Rivera", service: "SeaRay 230", dock_id: (req.franchise.docks[0] || {}).id,
     reservation_date: new Date(Date.now() + 2 * 86400000).setHours(8, 0, 0, 0),
     return_time: new Date(Date.now() + 2 * 86400000).setHours(13, 0, 0, 0),
+    sf_timeframe: "Fall Weekday - Morning",
   };
   res.json({ preview: renderTemplate(template, templateValues(sample, req.franchise)) });
 });

@@ -1508,6 +1508,7 @@ function fillTemplateFor(template, r, dockName) {
     "{time}": timeStr,
     "{return_time}": endStr,
     "{time_phrase}": endStr ? `from ${timeStr} to ${endStr}` : `at ${timeStr}`,
+    "{timeframe}": shortTimeframe(r.timeframeName || ""),
     "{dock}": dockName || "",
   };
   return template.replace(/\{[a-z_]+\}/g, (tok) => (tok in vals ? vals[tok] : tok));
