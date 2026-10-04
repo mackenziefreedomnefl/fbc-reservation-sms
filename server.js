@@ -2134,38 +2134,20 @@ async function parseAndApplyReply(inboundText, reservation) {
       "• St. Augustine Shipyard: 904-710-1358";
   }
 
-  // Tier 1 — strict patterns. Catches the common short replies instantly
-  // without an API round-trip.
+  // Tier 1 — strict patterns. Catches the common short replies instantly.
   if (cancelPatterns.test(replyLower)) return applyCancel(reservation);
   if (confirmPatterns.test(replyLower)) return applyConfirm(reservation);
 
-  // Tier 2 — Claude intent classification. Returns null on missing API key,
-  // network error, or timeout; in that case we fall through to the regex
-  // tiers below so the bot still works during an outage.
-  const llm = await classifyIntent(inboundText);
-  if (llm) {
-    console.log(`Claude intent: ${llm.intent}${llm.intent === "time_change" ? ` ${llm.hour}:${String(llm.minute).padStart(2, "0")}` : ""} ("${inboundText.slice(0, 80)}")`);
-    switch (llm.intent) {
-      case "cancel":
-        return applyCancel(reservation);
-      case "confirm":
-        return applyConfirm(reservation);
-      case "time_change":
-        if (Number.isInteger(llm.hour) && Number.isInteger(llm.minute)) {
-          return flagTimeChangeRequest(reservation, llm.hour, llm.minute);
-        }
-        break;
-      case "running_late":
-        return RUNNING_LATE_RESPONSE;
-      case "handoff":
-        return handoffResponse();
-      case "unknown":
-        // Fall through to regex tiers; if those also miss, robotic fallback.
-        break;
-    }
-  }
+  // LLM tier deliberately OFF (10/4, Mackenzie): the line runs like a
+  // doctor's office — strict menu, predictable replies, zero API cost.
+  // lib/intent.js is dormant; re-wire classifyIntent() here to re-enable.
 
-  // Tier 3 — loose regex. Only reached if Claude returned null or "unknown".
+  // Tier 2 — loose regex.
+  // Negated cancel ("I don't want to cancel") means KEEP the reservation —
+  // without this guard the loose cancel pattern below would cancel them.
+  if (/(don'?t|do not|dont|no need to|not going to|won'?t)\s+(want to\s+|wanna\s+|need to\s+)?cancel/.test(replyLower)) {
+    return applyConfirm(reservation);
+  }
   if (cancelLoose.test(replyLower)) return applyCancel(reservation);
   if (confirmLoose.test(replyLower)) return applyConfirm(reservation);
   if (timeMatch) {
