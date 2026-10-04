@@ -1507,7 +1507,7 @@ app.post("/api/reservations/:id/approve-time-change", requireAuth, requireFranch
        RETURNING *`,
       [reservation.pending_time_change, originalTime, id]
     );
-    const newTimeStr = new Date(reservation.pending_time_change).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const newTimeStr = new Date(reservation.pending_time_change).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: CLUB_TZ });
     try {
       await sendAndLogSms(req.franchise, updated[0],
         `Great news! Your new arrival time of ${newTimeStr} is confirmed. See you then!`,
@@ -1535,8 +1535,8 @@ app.post("/api/reservations/:id/reject-time-change", requireAuth, requireFranchi
     if (!reservation.pending_time_change) {
       return res.status(400).json({ error: "No pending time change on this reservation" });
     }
-    const requestedTimeStr = new Date(reservation.pending_time_change).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-    const originalTimeStr = new Date(reservation.reservation_date).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const requestedTimeStr = new Date(reservation.pending_time_change).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: CLUB_TZ });
+    const originalTimeStr = new Date(reservation.reservation_date).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: CLUB_TZ });
     const { rows: updated } = await db.query(
       `UPDATE reservations SET pending_time_change = NULL WHERE id = $1 RETURNING *`,
       [id]
