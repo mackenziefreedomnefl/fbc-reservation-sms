@@ -937,20 +937,23 @@ async function findHomeFranchises(activeFranchiseId, phone) {
 async function findReservationByPhoneInFranchise(franchiseId, phone) {
   const tail = last10(phone);
   if (!tail || !franchiseId) return null;
-  // A reply belongs to the member's ACTIVE reservation: today's or the
-  // soonest upcoming one (club-local days). Only when nothing is upcoming
-  // does it fall back to their most recent past reservation. (Plain
-  // "latest date first" routed replies to next week's trip instead of
-  // today's when a member had both.)
+  // A reply belongs to the member's ACTIVE reservation (today or upcoming,
+  // club-local). Among live ones, the MOST RECENTLY TEXTED wins — a member
+  // with reservations at two docks is almost always replying to whichever
+  // dock texted them last, and that's whose phone should ping. Never-texted
+  // live ones fall back to soonest-first; nothing live falls back to the
+  // most recent past reservation.
   const { rows } = await db.query(
-    `SELECT * FROM reservations
-     WHERE franchise_id = $1
-       AND RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $2
+    `SELECT r.* FROM reservations r
+     WHERE r.franchise_id = $1
+       AND RIGHT(REGEXP_REPLACE(r.phone, '\\D', '', 'g'), 10) = $2
      ORDER BY
-       ((reservation_date AT TIME ZONE '${CLUB_TZ}')::date >= (NOW() AT TIME ZONE '${CLUB_TZ}')::date) DESC NULLS LAST,
-       CASE WHEN (reservation_date AT TIME ZONE '${CLUB_TZ}')::date >= (NOW() AT TIME ZONE '${CLUB_TZ}')::date
-            THEN reservation_date END ASC,
-       reservation_date DESC NULLS LAST, created_at DESC
+       ((r.reservation_date AT TIME ZONE '${CLUB_TZ}')::date >= (NOW() AT TIME ZONE '${CLUB_TZ}')::date) DESC NULLS LAST,
+       (SELECT MAX(m.created_at) FROM messages m
+         WHERE m.reservation_id = r.id AND m.direction = 'out') DESC NULLS LAST,
+       CASE WHEN (r.reservation_date AT TIME ZONE '${CLUB_TZ}')::date >= (NOW() AT TIME ZONE '${CLUB_TZ}')::date
+            THEN r.reservation_date END ASC,
+       r.reservation_date DESC NULLS LAST, r.created_at DESC
      LIMIT 1`,
     [franchiseId, tail]
   );
