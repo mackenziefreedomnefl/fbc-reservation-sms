@@ -1139,7 +1139,14 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
             fontWeight: res.timeUpdated ? 600 : 400,
           }}>
             {endStr ? `${timeStr} – ${endStr}` : timeStr}
-            {res.timeUpdated && <span style={{ fontSize: 9, marginLeft: 3 }}>⏱ updated</span>}
+            {res.timeUpdated && (
+              <span title={res.originalTime
+                ? `Member moved their arrival — originally ${new Date(res.originalTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
+                : "Member moved their arrival by text"}
+                style={{ fontSize: 9, marginLeft: 3 }}>
+                ⏱ was {res.originalTime ? new Date(res.originalTime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "updated"}
+              </span>
+            )}
           </div>
           {res.timeframeName && (
             <div title={`Booked timeframe: ${res.timeframeName}`} style={{
@@ -1242,7 +1249,23 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
           gap: 12, flexWrap: "wrap",
         }}>
           <div style={{ fontSize: 13, color: palette.dark, fontFamily: "'Open Sans', sans-serif" }}>
-            Customer requested <strong>{new Date(res.pendingTimeChange).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</strong> instead of the current time.
+            {(() => {
+              const clk = (v) => new Date(v).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+              const req = new Date(res.pendingTimeChange);
+              const reqStr = req.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+              const parts = [`currently arriving ${clk(res.date)}`];
+              if (res.timeframeName) {
+                let note = shortTimeframe(res.timeframeName) + " timeframe";
+                if (res.windowEnd) {
+                  const end = new Date(res.windowEnd);
+                  note += req.getTime() > end.getTime()
+                    ? ` — ends ${clk(end)}, request is AFTER it`
+                    : ` ends ${clk(end)}`;
+                }
+                parts.push(note);
+              }
+              return (<span>Member asked for <strong>{reqStr}</strong> ({parts.join(" · ")}).</span>);
+            })()}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button
