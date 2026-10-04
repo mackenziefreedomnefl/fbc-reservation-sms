@@ -2749,6 +2749,78 @@ app.post("/api/message-template/preview", requireAuth, requireFranchiseContext, 
   res.json({ preview: renderTemplate(template, templateValues(sample, req.franchise)) });
 });
 
+// --- All editable staff message templates (Templates tab) ---
+const EXTRA_TEMPLATE_DEFAULTS = {
+  followup:
+    "Hi {first_name}! Just following up — can you make your reservation at {dock} on {date} {time_phrase}? " +
+    "Reply YES to confirm, NO to cancel, or send a new arrival time.",
+  weather: "Good morning! This is the FBC {dock} reservation line with a weather update: ",
+  sca_closed:
+    "Good evening, this is the FBC {dock} reservation line. Due to a small craft advisory, the docks are " +
+    "closed all day tomorrow and your reservation is cancelled. We're sorry for the inconvenience and hope " +
+    "to see you on the water soon.",
+  sca_delayed:
+    "Good evening, this is the FBC {dock} reservation line. Due to a small craft advisory, we expect a " +
+    "delayed opening tomorrow. We'll follow up with timing — please hold tight before heading to the dock. " +
+    "Thanks for your patience!",
+  quick_replies: [
+    "You're all set — see you then!",
+    "Got it — we've updated your reservation.",
+    "No problem, thanks for letting us know!",
+    "Someone from the dock will give you a call shortly.",
+    "Best to give the dock a call and they'll take care of you.",
+  ],
+};
+
+app.get("/api/templates", requireAuth, requireFranchiseContext, (req, res) => {
+  const stored = req.franchise.templates || {};
+  const out = {
+    confirmation: {
+      value: req.franchise.message_template || DEFAULT_MESSAGE_TEMPLATE,
+      isCustom: !!req.franchise.message_template,
+      default: DEFAULT_MESSAGE_TEMPLATE,
+    },
+  };
+  for (const key of Object.keys(EXTRA_TEMPLATE_DEFAULTS)) {
+    out[key] = {
+      value: stored[key] != null ? stored[key] : EXTRA_TEMPLATE_DEFAULTS[key],
+      isCustom: stored[key] != null,
+      default: EXTRA_TEMPLATE_DEFAULTS[key],
+    };
+  }
+  res.json({ templates: out, placeholders: TEMPLATE_PLACEHOLDERS });
+});
+
+app.post("/api/templates", requireAuth, requireFranchiseContext, async (req, res) => {
+  if (req.session.role !== "super_admin" && req.session.role !== "franchise_admin") {
+    return res.status(403).json({ error: "Only admins can edit templates" });
+  }
+  const { key } = req.body;
+  let { value } = req.body;
+  if (key === "confirmation") {
+    const template = value != null ? String(value).slice(0, 1200).trim() : "";
+    const toStore = template && template !== DEFAULT_MESSAGE_TEMPLATE ? template : null;
+    await db.query(`UPDATE franchises SET message_template = $1 WHERE id = $2`, [toStore, req.franchiseId]);
+    invalidateFranchise(req.franchiseId);
+    return res.json({ success: true, value: toStore || DEFAULT_MESSAGE_TEMPLATE, isCustom: !!toStore });
+  }
+  if (!(key in EXTRA_TEMPLATE_DEFAULTS)) return res.status(400).json({ error: "Unknown template key" });
+  if (key === "quick_replies") {
+    value = (Array.isArray(value) ? value : String(value || "").split("\n"))
+      .map((s) => String(s).trim()).filter(Boolean).slice(0, 8);
+    if (value.length === 0) value = null;
+  } else {
+    value = value != null ? String(value).slice(0, 1200).trim() : "";
+    if (!value || value === EXTRA_TEMPLATE_DEFAULTS[key]) value = null;
+  }
+  const stored = { ...(req.franchise.templates || {}) };
+  if (value == null) delete stored[key];
+  else stored[key] = value;
+  await db.query(`UPDATE franchises SET templates = $1 WHERE id = $2`, [JSON.stringify(stored), req.franchiseId]);
+  invalidateFranchise(req.franchiseId);
+  res.json({ success: true, value: value != null ? value : EXTRA_TEMPLATE_DEFAULTS[key], isCustom: value != null });
+});
+
 app.post("/api/message-template", requireAuth, requireFranchiseContext, async (req, res) => {
   if (req.session.role !== "super_admin" && req.session.role !== "franchise_admin") {
     return res.status(403).json({ error: "Only admins can edit the message template" });

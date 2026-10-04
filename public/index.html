@@ -118,6 +118,21 @@ const api = {
     return res.json();
   },
 
+  async getTemplates() {
+    const res = await fetch(`${API_BASE}/api/templates`, { credentials: "same-origin" });
+    return res.json();
+  },
+
+  async saveTemplate(key, value) {
+    const res = await fetch(`${API_BASE}/api/templates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ key, value }),
+    });
+    return res.json();
+  },
+
   async previewMessageTemplate(template) {
     const res = await fetch(`${API_BASE}/api/message-template/preview`, {
       method: "POST",
@@ -864,8 +879,24 @@ function CancelledAtNote({ res }) {
   );
 }
 
-// Pre-made STAFF replies — tapping fills the reply box (editable, never
-// auto-sent). Used in both the reservation SMS drawer and Conversations.
+// Shared template cache — editable on the Templates tab, used by compose
+// and the quick-reply chips. Invalidated after a save.
+let _tplCache = null;
+function useTemplates() {
+  const [tpl, setTpl] = useState(_tplCache);
+  useEffect(() => {
+    if (_tplCache) { setTpl(_tplCache); return; }
+    let active = true;
+    api.getTemplates()
+      .then((t) => { if (t && t.templates) { _tplCache = t.templates; if (active) setTpl(t.templates); } })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+  return tpl;
+}
+function invalidateTemplateCache() { _tplCache = null; }
+
+// Fallbacks while templates load (match the server defaults).
 const STAFF_QUICK_REPLIES = [
   "You're all set — see you then!",
   "Got it — we've updated your reservation.",
@@ -875,13 +906,15 @@ const STAFF_QUICK_REPLIES = [
 ];
 
 function StaffQuickReplies({ onPick }) {
+  const tpl = useTemplates();
+  const replies = (tpl && tpl.quick_replies && tpl.quick_replies.value) || STAFF_QUICK_REPLIES;
   return (
     <div style={{
       padding: "8px 16px 0", background: palette.card,
       borderTop: `1px solid ${palette.border}`,
       display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch",
     }}>
-      {STAFF_QUICK_REPLIES.map((t) => (
+      {replies.map((t) => (
         <button key={t} onClick={() => onPick(t)}
           title="Fills the reply box — edit before sending"
           style={{
@@ -1590,6 +1623,104 @@ function MessageTemplateEditor() {
   );
 }
 
+// ─── Extra templates editor (Templates tab) ──────────────────────
+function ExtraTemplatesEditor() {
+  const [loaded, setLoaded] = useState(null);
+  const [vals, setVals] = useState({});
+  const [savedKey, setSavedKey] = useState(null);
+  const [savingKey, setSavingKey] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    api.getTemplates().then((t) => {
+      if (!active || !t || !t.templates) return;
+      setLoaded(t.templates);
+      setVals({
+        followup: t.templates.followup.value,
+        weather: t.templates.weather.value,
+        sca_closed: t.templates.sca_closed.value,
+        sca_delayed: t.templates.sca_delayed.value,
+        quick_replies: (t.templates.quick_replies.value || []).join("\n"),
+      });
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  const SECTIONS = [
+    { key: "followup", title: "2nd-Chance Follow-Up", note: "Blanks like {first_name}, {date}, {time_phrase}, {dock} fill in per member." },
+    { key: "weather", title: "Weather Update Starter", note: "{dock} fills in automatically — staff finish the sentence before sending." },
+    { key: "sca_closed", title: "Small Craft — Closed All Day", note: "{dock} fills in automatically." },
+    { key: "sca_delayed", title: "Small Craft — Delayed Opening", note: "{dock} fills in automatically." },
+    { key: "quick_replies", title: "Quick Replies", note: "One per line (max 8) — shown as tap-to-fill chips above the reply box." },
+  ];
+
+  const save = async (key, value) => {
+    setSavingKey(key);
+    try {
+      const r = await api.saveTemplate(key, key === "quick_replies" ? String(value).split("\n") : value);
+      if (r && r.success) {
+        invalidateTemplateCache();
+        setLoaded((prev) => ({ ...prev, [key]: { ...prev[key], value: r.value, isCustom: r.isCustom } }));
+        setVals((prev) => ({ ...prev, [key]: key === "quick_replies" ? (r.value || []).join("\n") : r.value }));
+        setSavedKey(key);
+        setTimeout(() => setSavedKey((k) => (k === key ? null : k)), 2000);
+      }
+    } catch {}
+    setSavingKey(null);
+  };
+
+  if (!loaded) return null;
+  return (
+    <div style={{ marginTop: 24 }}>
+      {SECTIONS.map((s) => (
+        <div key={s.key} style={{
+          background: palette.card, borderRadius: 14, border: `1px solid ${palette.border}`,
+          boxShadow: palette.shadow, padding: "18px 20px", marginBottom: 14,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: palette.dark, fontFamily: "'Montserrat', sans-serif" }}>
+              {s.title}
+              {loaded[s.key] && loaded[s.key].isCustom && (
+                <span style={{ marginLeft: 8, fontSize: 10, color: palette.accent, fontWeight: 600 }}>customized</span>
+              )}
+            </div>
+            {loaded[s.key] && loaded[s.key].isCustom && (
+              <button onClick={() => save(s.key, "")} style={{
+                background: "none", border: "none", color: palette.muted, fontSize: 11,
+                fontWeight: 600, cursor: "pointer", fontFamily: "'Open Sans', sans-serif",
+              }}>Reset to default</button>
+            )}
+          </div>
+          {s.note && <div style={{ fontSize: 11, color: palette.muted, marginBottom: 8, fontFamily: "'Open Sans', sans-serif" }}>{s.note}</div>}
+          <textarea
+            value={vals[s.key] || ""}
+            onChange={(e) => setVals((prev) => ({ ...prev, [s.key]: e.target.value }))}
+            rows={s.key === "quick_replies" ? 6 : 4}
+            style={{
+              width: "100%", padding: 12, borderRadius: 10, boxSizing: "border-box",
+              border: `1.5px solid ${palette.border}`, background: "#F5F8FB",
+              fontSize: 13, lineHeight: 1.6, fontFamily: "'Open Sans', sans-serif",
+              color: palette.dark, resize: "vertical", outline: "none",
+            }}
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, marginTop: 8 }}>
+            {savedKey === s.key && <span style={{ fontSize: 12, color: palette.green, fontWeight: 600, fontFamily: "'Open Sans', sans-serif" }}>✓ Updated</span>}
+            <button
+              onClick={() => save(s.key, vals[s.key])}
+              disabled={savingKey === s.key}
+              style={{
+                padding: "8px 20px", borderRadius: 9, border: "none",
+                background: savingKey === s.key ? palette.border : palette.accent, color: "#fff",
+                fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Open Sans', sans-serif",
+              }}
+            >{savingKey === s.key ? "Updating…" : "Update"}</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Automation Panel ────────────────────────────────────────────
 function AutomationPanel({ reservations }) {
   const [rules, setRules] = useState([
@@ -1605,6 +1736,7 @@ function AutomationPanel({ reservations }) {
   return (
     <div>
       <MessageTemplateEditor />
+      <ExtraTemplatesEditor />
 
       {/* Stats */}
       <div style={{
@@ -1683,42 +1815,35 @@ function SmsComposeModal({ compose, reservations, dockName, dispatch, onSend }) 
   // the others are starting points staff can finish or rewrite; Custom is a
   // blank page. Only Confirmation marks members as "messaged"/pending.
   const res = mode === "single" ? reservations.find((r) => r.id === id) : null;
-  const [template, setTemplate] = useState(null); // franchise confirmation template
+  const tpl = useTemplates(); // all editable templates (Templates tab)
   const [msgType, setMsgType] = useState("confirmation");
   const [body, setBody] = useState("");
   const [touched, setTouched] = useState(false);
   const [sending, setSending] = useState(false);
 
-  const confirmationBody = (tpl) => {
-    // Second-chance sends use the follow-up wording, not the original ask.
-    const source = resend ? FOLLOWUP_TEMPLATE : tpl;
-    if (!source) return "";
-    // Single: fully filled in for this member. Bulk: keep the {placeholders}
-    // visible — they fill in per member at send time.
-    return mode === "single" && res ? fillTemplateFor(source, res, dockName) : source;
-  };
+  const tv = (key, fallback) => (tpl && tpl[key] && tpl[key].value) || fallback;
+  const template = tpl ? tv("confirmation", "") : null; // null = still loading
+
+  // Single: fully filled in for this member. Bulk: keep the {placeholders}
+  // visible — they fill in per member at send time.
+  const renderTpl = (source) =>
+    source && mode === "single" && res ? fillTemplateFor(source, res, dockName) : (source || "");
+
+  const confirmationBody = (t) => renderTpl(resend ? tv("followup", FOLLOWUP_TEMPLATE) : t);
 
   useEffect(() => {
-    let active = true;
-    api.getMessageTemplate()
-      .then((t) => {
-        if (!active) return;
-        const tpl = (t && t.template) || "";
-        setTemplate(tpl);
-        setBody((prev) => (prev === "" ? confirmationBody(tpl) : prev));
-      })
-      .catch(() => { if (active) setTemplate(""); });
-    return () => { active = false; };
-  }, []);
+    if (!tpl) return;
+    setBody((prev) => (prev === "" ? confirmationBody(tv("confirmation", "")) : prev));
+  }, [tpl]);
 
   const TYPES = [
     { key: "confirmation", label: "Confirmation", build: () => confirmationBody(template) },
     { key: "weather", label: "Weather update",
-      build: () => `Good morning! This is the ${dn} reservation line with a weather update: ` },
+      build: () => renderTpl(tv("weather", `Good morning! This is the ${dn} reservation line with a weather update: `)) },
     { key: "sca-closed", label: "Small craft — closed",
-      build: () => `Good evening, this is the ${dn} reservation line. Due to a small craft advisory, the docks are closed all day tomorrow and your reservation is cancelled. We're sorry for the inconvenience and hope to see you on the water soon.` },
+      build: () => renderTpl(tv("sca_closed", `Good evening, this is the ${dn} reservation line. Due to a small craft advisory, the docks are closed all day tomorrow and your reservation is cancelled. We're sorry for the inconvenience and hope to see you on the water soon.`)) },
     { key: "sca-delayed", label: "Small craft — delayed",
-      build: () => `Good evening, this is the ${dn} reservation line. Due to a small craft advisory, we expect a delayed opening tomorrow. We'll follow up with timing — please hold tight before heading to the dock. Thanks for your patience!` },
+      build: () => renderTpl(tv("sca_delayed", `Good evening, this is the ${dn} reservation line. Due to a small craft advisory, we expect a delayed opening tomorrow. We'll follow up with timing — please hold tight before heading to the dock. Thanks for your patience!`)) },
     { key: "custom", label: "Type your own", build: () => "" },
   ];
 
@@ -4705,7 +4830,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
                 fontSize: 13, fontWeight: 600, cursor: "pointer",
                 fontFamily: "'Open Sans', sans-serif", transition: "all 0.15s",
               }}
-            >Message</button>
+            >Templates</button>
             {me && me.user && me.user.role === "super_admin" && (
               <button
                 onClick={() => dispatch({ type: "SET_VIEW", payload: "users" })}
