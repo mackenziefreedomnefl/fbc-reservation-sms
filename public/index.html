@@ -4697,27 +4697,6 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
               }}
             >Reservations</button>
             <button
-              onClick={() => dispatch({ type: "SET_VIEW", payload: "conversations" })}
-              style={{
-                padding: "10px 22px", borderRadius: 10, border: "none",
-                background: state.view === "conversations" ? palette.dark : "transparent",
-                color: state.view === "conversations" ? "#fff" : palette.muted,
-                fontSize: 13, fontWeight: 600, cursor: "pointer",
-                fontFamily: "'Open Sans', sans-serif", transition: "all 0.15s",
-                position: "relative",
-              }}
-            >Conversations
-              {unreadCount > 0 && (
-                <span style={{
-                  marginLeft: 6, display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  minWidth: 18, height: 18, padding: "0 5px",
-                  borderRadius: 9, background: palette.red, color: "#fff",
-                  fontSize: 11, fontWeight: 700, fontFamily: "'Open Sans', sans-serif",
-                  fontVariantNumeric: "tabular-nums",
-                }}>{unreadCount}</span>
-              )}
-            </button>
-            <button
               onClick={() => dispatch({ type: "SET_VIEW", payload: "automation" })}
               style={{
                 padding: "10px 22px", borderRadius: 10, border: "none",
