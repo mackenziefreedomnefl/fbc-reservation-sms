@@ -2023,7 +2023,7 @@ const HANDOFF_PREFIX = "This line is just for confirming, canceling, or changing
 function handoffResponse() {
   return (
     `${HANDOFF_PREFIX} on existing reservations. For anything else — same-day bookings, ` +
-    `new reservations, or questions — please give the dock a call:\n` +
+    `boat type changes, new reservations, or questions — please give the dock a call:\n` +
     `• Jacksonville Beach: 904-562-8676\n` +
     `• Julington Creek East: 904-625-1847\n` +
     `• Julington Creek West (Pontoons Only): 904-874-6314\n` +
