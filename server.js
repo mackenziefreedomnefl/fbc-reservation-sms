@@ -1151,16 +1151,21 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
 
       const merging = !!batchId;
       let existingBySource = new Map();
-      let existingCount = 0;
+      // Next ID suffix comes from the MAX existing suffix, not the row
+      // count — fresh imports skip non-Scheduled payload rows, so suffixes
+      // can have gaps and the max can exceed the count (count-based seq
+      // collided on the primary key).
+      let maxExistingSeq = 0;
       if (merging) {
         const { rows: existingRows } = await c.query(
           `SELECT id, source_id, status, time_updated, pending_time_change
            FROM reservations WHERE franchise_id = $1 AND import_batch_id = $2`,
           [req.franchiseId, batchId]
         );
-        existingCount = existingRows.length;
         for (const row of existingRows) {
           if (row.source_id) existingBySource.set(row.source_id, row);
+          const n = parseInt(String(row.id).split("-").pop(), 10);
+          if (Number.isFinite(n) && n > maxExistingSeq) maxExistingSeq = n;
         }
       } else {
         const { rows: [batch] } = await c.query(
@@ -1239,7 +1244,7 @@ app.post("/api/reservations/import", requireAuth, requireFranchiseContext, async
             removed++;
           }
         } else {
-          const seq = merging ? existingCount + added + 1 : i + 1;
+          const seq = merging ? maxExistingSeq + added + 1 : i + 1;
           const reservationId = `F${req.franchiseId}-${prefix}-B${batchId}-${String(seq).padStart(3, "0")}`;
           // A reservation that APPEARS mid-day for today is a same-day
           // call-in — they just booked it, so it's confirmed by definition.
