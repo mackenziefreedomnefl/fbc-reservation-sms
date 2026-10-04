@@ -2040,8 +2040,25 @@ app.post("/api/members/:phone/dnc", requireAuth, requireFranchiseContext, async 
 //
 // Cancel is checked before confirm at every tier — mis-confirming a cancel is
 // the costlier failure mode of the two.
-const CONFIRM_RESPONSE = "Thank you! Your reservation is confirmed. We look forward to seeing you!";
-const CANCEL_RESPONSE = "Your reservation has been cancelled. If you change your mind, please call us to rebook.";
+// Replies always NAME the reservation they acted on (date + dock) — a
+// member with reservations at two docks sees one thread, so "YES" is
+// ambiguous unless we say exactly which one we confirmed.
+const DOCK_DISPLAY_NAMES = {
+  "jax-beach": "Jacksonville Beach",
+  "julington-east": "Julington Creek East",
+  "julington-west": "Julington Creek West",
+  "camachee-cove": "Camachee Cove",
+  "shipyard": "St. Augustine Shipyard",
+};
+function describeRes(reservation) {
+  if (!reservation) return "your reservation";
+  const dock = DOCK_DISPLAY_NAMES[reservation.dock_id];
+  const d = reservation.reservation_date ? new Date(reservation.reservation_date) : null;
+  const when = d && !isNaN(d.getTime())
+    ? d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: CLUB_TZ })
+    : null;
+  return "your" + (when ? ` ${when}` : "") + " reservation" + (dock ? ` at ${dock}` : "");
+}
 const DOCK_PHONES = {
   "jax-beach": "904-562-8676",
   "julington-east": "904-625-1847",
@@ -2110,12 +2127,12 @@ async function applyCancel(reservation) {
     `UPDATE reservations SET status = 'cancelled', cancelled_at = NOW() WHERE id = $1`,
     [reservation.id]
   );
-  return CANCEL_RESPONSE;
+  return `We've cancelled ${describeRes(reservation)}. If you change your mind, please call us to rebook.`;
 }
 
 async function applyConfirm(reservation) {
   await db.query(`UPDATE reservations SET status = 'confirmed' WHERE id = $1`, [reservation.id]);
-  return CONFIRM_RESPONSE;
+  return `Thank you! ${describeRes(reservation).replace(/^your/, "Your")} is confirmed. We look forward to seeing you!`;
 }
 
 // We don't have an availability source of truth — the FBC booking system
@@ -2155,7 +2172,7 @@ async function flagTimeChangeRequest(reservation, hour, minute) {
        WHERE id = $3`,
       [requested.toISOString(), reservation.reservation_date, reservation.id]
     );
-    return `You're all set — we've updated your arrival to ${newTimeStr}. See you then!`;
+    return `You're all set — we've updated ${describeRes(reservation)} to a ${newTimeStr} arrival. See you then!`;
   }
 
   await db.query(
