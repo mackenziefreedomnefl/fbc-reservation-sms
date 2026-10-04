@@ -1705,8 +1705,11 @@ app.post("/api/sms/send-bulk", requireAuth, requireFranchiseContext, async (req,
   // confirmation=false (weather update / notice): members who already got
   // their confirmation text are NOT skipped, and the send doesn't mark them
   // as messaged — skip rules below only guard the confirmation flow.
-  const { ids, dock: dockId, body: customBody, confirmation } = req.body;
+  const { ids, dock: dockId, body: customBody, confirmation, resend } = req.body;
   const isConfirmation = confirmation !== false;
+  // resend: second-chance confirmation — targets No Reply members (already
+  // messaged, never answered) instead of skipping them.
+  const isResend = resend === true;
   if (!dockId) return res.status(400).json({ error: "Missing dock parameter" });
   if (denyIfDockOutOfScope(req, res, dockId)) return;
 
@@ -1740,12 +1743,14 @@ app.post("/api/sms/send-bulk", requireAuth, requireFranchiseContext, async (req,
 
   const requested = candidates.length;
   const skippedNoPhone = candidates.filter((r) => !r.phone).length;
-  const skippedAlreadySent = isConfirmation
+  const skippedAlreadySent = isConfirmation && !isResend
     ? candidates.filter((r) => r.phone && r.message_sent).length
     : 0;
-  const skippedFlagged = candidates.filter((r) => r.phone && (isConfirmation ? !r.message_sent : true) && r.skip_reminder).length;
+  const skippedFlagged = candidates.filter((r) => r.phone && r.skip_reminder).length;
   const targets = candidates.filter((r) =>
-    r.phone && !r.skip_reminder && (isConfirmation ? !r.message_sent : true));
+    r.phone && !r.skip_reminder &&
+    (isResend ? r.status === "pending"
+     : isConfirmation ? !r.message_sent : true));
 
   const results = { sent: 0, failed: 0, errors: [] };
   for (const r of targets) {

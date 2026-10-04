@@ -250,12 +250,12 @@ const api = {
     return res.json();
   },
 
-  async sendBulk(ids, dockId, body, confirmation) {
+  async sendBulk(ids, dockId, body, confirmation, resend) {
     const res = await fetch(`${API_BASE}/api/sms/send-bulk`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ ids, dock: dockId, ...(body ? { body } : {}), confirmation: confirmation !== false }),
+      body: JSON.stringify({ ids, dock: dockId, ...(body ? { body } : {}), confirmation: confirmation !== false, resend: resend === true }),
     });
     return res.json();
   },
@@ -1662,8 +1662,12 @@ function fillTemplateFor(template, r, dockName) {
   return template.replace(/\{[a-z_]+\}/g, (tok) => (tok in vals ? vals[tok] : tok));
 }
 
+const FOLLOWUP_TEMPLATE =
+  "Hi {first_name}! Just following up — can you make your reservation on {date} {time_phrase}? " +
+  "Reply YES to confirm, NO to cancel, or send a new arrival time.";
+
 function SmsComposeModal({ compose, reservations, dockName, dispatch, onSend }) {
-  const { id, mode } = compose;
+  const { id, mode, resend } = compose;
   const dn = dockName ? `FBC ${dockName}` : "Freedom Boat Club";
 
   // Message types: Confirmation shows the real (editable) confirmation text;
@@ -1677,10 +1681,12 @@ function SmsComposeModal({ compose, reservations, dockName, dispatch, onSend }) 
   const [sending, setSending] = useState(false);
 
   const confirmationBody = (tpl) => {
-    if (!tpl) return "";
+    // Second-chance sends use the follow-up wording, not the original ask.
+    const source = resend ? FOLLOWUP_TEMPLATE : tpl;
+    if (!source) return "";
     // Single: fully filled in for this member. Bulk: keep the {placeholders}
     // visible — they fill in per member at send time.
-    return mode === "single" && res ? fillTemplateFor(tpl, res, dockName) : tpl;
+    return mode === "single" && res ? fillTemplateFor(source, res, dockName) : source;
   };
 
   useEffect(() => {
@@ -1727,11 +1733,12 @@ function SmsComposeModal({ compose, reservations, dockName, dispatch, onSend }) 
     setSending(true);
     // An untouched confirmation sends with no body at all — the server
     // renders its own template per member (what the preview showed anyway).
-    const sendBody = isConfirmation && !touched ? undefined : body;
+    // Resends always carry the follow-up body explicitly.
+    const sendBody = isConfirmation && !touched && !resend ? undefined : body;
     if (mode === "single") {
       await onSend({ type: "SEND_SMS_CUSTOM", id, body: sendBody, confirmation: isConfirmation });
     } else {
-      await onSend({ type: "SEND_BULK_CUSTOM", ids: bulkIds, body: sendBody, confirmation: isConfirmation });
+      await onSend({ type: "SEND_BULK_CUSTOM", ids: bulkIds, body: sendBody, confirmation: isConfirmation, resend: resend === true });
     }
     setSending(false);
     dispatch({ type: "CLOSE_COMPOSE" });
@@ -4523,7 +4530,7 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
       case "SEND_BULK_CUSTOM": {
         // Actually send bulk with custom body
         try {
-          const result = await api.sendBulk(action.ids, state.currentDock, action.body, action.confirmation);
+          const result = await api.sendBulk(action.ids, state.currentDock, action.body, action.confirmation, action.resend);
           if (result.success) {
             const { sent, failed, requested, skippedNoPhone, skippedAlreadySent, skippedFlagged } = result;
             const parts = [];
@@ -4882,6 +4889,22 @@ function ReservationDashboard({ onLogout, me, onFranchiseChanged }) {
                 />
               ) : (
                 <div style={{ flex: 1 }} />
+              )}
+              {counts.pending > 0 && (
+                <button
+                  onClick={() => {
+                    const ids = state.reservations.filter((r) => r.status === "pending").map((r) => r.id);
+                    dispatch({ type: "OPEN_COMPOSE", payload: { id: ids, mode: "bulk", resend: true } });
+                  }}
+                  title="Send a follow-up confirmation to everyone still on No Reply — you'll review the message first"
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+                    padding: "8px 14px", borderRadius: 20, cursor: "pointer",
+                    border: `1.5px solid ${palette.amber}`, background: palette.amberLight,
+                    color: palette.amber, fontSize: 12, fontWeight: 700,
+                    fontFamily: "'Open Sans', sans-serif",
+                  }}
+                >🔁 2nd chance ({counts.pending})</button>
               )}
               <button
                 onClick={() => { dispatch({ type: "REFRESH" }); dispatch({ type: "SHOW_TOAST", payload: "Refreshed" }); }}
