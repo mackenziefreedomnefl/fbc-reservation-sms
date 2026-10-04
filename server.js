@@ -2138,8 +2138,9 @@ async function parseAndApplyReply(inboundText, reservation) {
   // Meridiem inference: 1–6 reads as afternoon, 7–12 as morning/noon.
   const bareTime = !timeMatch && (
     replyLower.match(/(\d{1,2}):(\d{2})(?!\s*(?:am|pm))/) ||
-    // Compact: the whole message is just "930" / "1030"
-    replyLower.match(/^\s*(\d{1,2})(\d{2})\s*$/) ||
+    // The whole message is just a number — "11", "930", "9 30": on this
+    // line, a bare number means an arrival time.
+    replyLower.match(/^\s*(\d{1,2})\s?(\d{2})?\s*$/) ||
     // With arrival context: "coming at 930", "eta 10"
     replyLower.match(/(?:arriv\w+|coming|be there|eta|around|make it|move to|updat\w+(?: to)?|\bat)\s+(\d{1,2}):?(\d{2})?\b/)
   );
