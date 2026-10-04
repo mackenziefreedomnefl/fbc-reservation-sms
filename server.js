@@ -2058,6 +2058,26 @@ const DOCK_PHONE_LIST =
   `• Julington Creek West (Pontoons Only): 904-874-6314\n` +
   `• Camachee Cove: 904-562-8842\n` +
   `• St. Augustine Shipyard: 904-710-1358`;
+// NOAA point forecasts per dock + the Jacksonville marine page. Weather
+// questions get these links — no promises, the dock makes the call.
+const DOCK_WEATHER_LINKS = {
+  "jax-beach": "https://forecast.weather.gov/MapClick.php?lat=30.287&lon=-81.393",
+  "julington-east": "https://forecast.weather.gov/MapClick.php?lat=30.134&lon=-81.632",
+  "julington-west": "https://forecast.weather.gov/MapClick.php?lat=30.134&lon=-81.632",
+  "camachee-cove": "https://forecast.weather.gov/MapClick.php?lat=29.925&lon=-81.300",
+  "shipyard": "https://forecast.weather.gov/MapClick.php?lat=29.881&lon=-81.310",
+};
+const MARINE_FORECAST_LINK = "https://www.weather.gov/jax/marine";
+function weatherResponse(reservation) {
+  const dockLink = reservation && DOCK_WEATHER_LINKS[reservation.dock_id];
+  return (
+    "Great question — here's where to check:\n" +
+    (dockLink ? `• Local forecast: ${dockLink}\n` : "") +
+    `• Marine conditions: ${MARINE_FORECAST_LINK}\n\n` +
+    "The dock makes the final weather call. If we need to delay or close, we'll text you."
+  );
+}
+
 const HANDOFF_PREFIX = "This line is just for confirming, canceling, or changing arrival times";
 function handoffResponse() {
   return (
@@ -2221,6 +2241,9 @@ async function parseAndApplyReply(inboundText, reservation) {
     if (h >= 0 && h <= 23 && m >= 0 && m <= 59) return flagTimeChangeRequest(reservation, h, m);
   }
   if (confirmLoose.test(replyLower)) return applyConfirm(reservation);
+  if (/(weather|forecast|wind|windy|gust|rain|storm|chop|choppy|rough|seas|small craft|advisory)/.test(replyLower)) {
+    return weatherResponse(reservation);
+  }
   if (/(running late|gonna be late|going to be late|be a (little|bit) late|bit behind|behind schedule|stuck in traffic|push (it )?back|be there later|come later|little later)/.test(replyLower)) {
     return RUNNING_LATE_RESPONSE;
   }

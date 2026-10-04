@@ -1233,23 +1233,40 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
           )}
         </div>
 
-        {/* Status */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {res.pendingTimeChange && (
-            <span title="Customer requested a new arrival time — review below" style={{
-              fontSize: 11, padding: "3px 8px", borderRadius: 6,
-              background: palette.amberLight, color: palette.amber,
-              fontWeight: 700, fontFamily: "'Open Sans', sans-serif",
-              border: `1px solid ${palette.amber}40`,
-            }}>⏰ TIME CHANGE</span>
-          )}
-          <AttentionBadge res={res} />
-          <SameDayBadge res={res} />
-          <NoReplyShowBadge res={res} />
-          <TripBadge res={res} />
-          <StatusBadge status={res.status} />
-          <CancelledAtNote res={res} />
-        </div>
+      </div>
+
+      {/* Latest text, like a messages app — tap the row for the full thread */}
+      {(res.smsLog || []).length > 0 && (() => {
+        const last = res.smsLog[res.smsLog.length - 1];
+        const inbound = last.from !== "system";
+        return (
+          <div style={{ marginTop: 8, display: "flex", justifyContent: inbound ? "flex-start" : "flex-end" }}>
+            <div style={{
+              maxWidth: "85%", background: inbound ? palette.iosGrey : palette.iosBlue,
+              color: inbound ? "#000" : "#fff", padding: "6px 12px",
+              borderRadius: 15, fontSize: 13, fontFamily: IMSG_FONT,
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>{last.text}</div>
+          </div>
+        );
+      })()}
+
+      {/* Status pills beneath the texts */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+        {res.pendingTimeChange && (
+          <span title="Customer requested a new arrival time — review below" style={{
+            fontSize: 11, padding: "3px 8px", borderRadius: 6,
+            background: palette.amberLight, color: palette.amber,
+            fontWeight: 700, fontFamily: "'Open Sans', sans-serif",
+            border: `1px solid ${palette.amber}40`,
+          }}>⏰ TIME CHANGE</span>
+        )}
+        <AttentionBadge res={res} />
+        <SameDayBadge res={res} />
+        <NoReplyShowBadge res={res} />
+        <TripBadge res={res} />
+        <StatusBadge status={res.status} />
+        <CancelledAtNote res={res} />
       </div>
 
       {/* Pending time-change banner — surfaced prominently when set */}
@@ -1308,6 +1325,39 @@ function ReservationRow({ res, isSelected, isChecked, dispatch }) {
               }}
             >Reject</button>
           </div>
+        </div>
+      )}
+
+      {/* Expanded: full text thread, iMessage style */}
+      {isSelected && (res.smsLog || []).length > 0 && (
+        <div style={{
+          marginTop: 14, paddingTop: 14, borderTop: `1px solid ${palette.border}`,
+          display: "flex", flexDirection: "column", gap: 6,
+          animation: "fadeIn 0.2s ease-out",
+        }} onClick={(e) => e.stopPropagation()}>
+          {res.smsLog.map((m, i) => {
+            const mt = m.time ? new Date(m.time) : null;
+            const tlabel = mt
+              ? mt.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+                " " + mt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+              : "";
+            const inbound = m.from !== "system";
+            return (
+              <div key={i} style={{
+                alignSelf: inbound ? "flex-start" : "flex-end", maxWidth: "80%",
+                background: inbound ? palette.iosGrey : palette.iosBlue,
+                color: inbound ? "#000" : "#fff",
+                padding: "8px 13px", borderRadius: 18,
+                borderBottomLeftRadius: inbound ? 5 : 18,
+                borderBottomRightRadius: inbound ? 18 : 5,
+                fontSize: 15, lineHeight: 1.35, fontFamily: IMSG_FONT,
+                whiteSpace: "pre-wrap", wordBreak: "break-word",
+              }}>
+                {m.text}
+                <div style={{ fontSize: 10, marginTop: 3, color: inbound ? palette.muted : "rgba(255,255,255,0.7)" }}>{tlabel}</div>
+              </div>
+            );
+          })}
         </div>
       )}
 
