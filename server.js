@@ -2079,13 +2079,22 @@ function weatherResponse(reservation) {
 }
 
 const HANDOFF_PREFIX = "This line is just for confirming, canceling, or changing arrival times";
+// Conservative two-step: ask which location, then hand over that dock's
+// number (see the location-name branch in parseAndApplyReply).
 function handoffResponse() {
   return (
     `${HANDOFF_PREFIX} on existing reservations. For anything else — same-day bookings, ` +
-    `boat type changes, new reservations, or questions — please give the dock a call:\n` +
-    DOCK_PHONE_LIST
+    `boat type changes, new reservations, or questions — it's best to call the dock directly.\n\n` +
+    `Which location are you boating with? Reply: Jax Beach, Julington East, Julington West, Camachee, or Shipyard.`
   );
 }
+const DOCK_CALL_RESPONSES = {
+  "jax-beach": "Jacksonville Beach: 904-562-8676 — give them a call and they'll take care of you!",
+  "julington-east": "Julington Creek East: 904-625-1847 — give them a call and they'll take care of you!",
+  "julington-west": "Julington Creek West (Pontoons Only): 904-874-6314 — give them a call and they'll take care of you!",
+  "camachee-cove": "Camachee Cove: 904-562-8842 — give them a call and they'll take care of you!",
+  "shipyard": "St. Augustine Shipyard: 904-710-1358 — give them a call and they'll take care of you!",
+};
 // Member says they're late but gave no time — the one thing the bot can fix
 // on its own is the arrival time, so ask for it instead of handing off.
 const RUNNING_LATE_RESPONSE =
@@ -2252,6 +2261,16 @@ async function parseAndApplyReply(inboundText, reservation) {
   }
   if (/(running late|gonna be late|going to be late|be a (little|bit) late|bit behind|behind schedule|stuck in traffic|push (it )?back|be there later|come later|little later)/.test(replyLower)) {
     return RUNNING_LATE_RESPONSE;
+  }
+  // Location-name reply (answering "which location are you boating with?")
+  // → that dock's phone number. St. Augustine alone is ambiguous — two docks.
+  if (/julington.*west|jul.*w\b|pontoon/.test(replyLower)) return DOCK_CALL_RESPONSES["julington-west"];
+  if (/julington/.test(replyLower)) return DOCK_CALL_RESPONSES["julington-east"];
+  if (/camachee/.test(replyLower)) return DOCK_CALL_RESPONSES["camachee-cove"];
+  if (/shipyard/.test(replyLower)) return DOCK_CALL_RESPONSES["shipyard"];
+  if (/jax|jacksonville/.test(replyLower)) return DOCK_CALL_RESPONSES["jax-beach"];
+  if (/st ?aug/.test(replyLower)) {
+    return "St. Augustine has two locations — Camachee Cove: 904-562-8842, or St. Augustine Shipyard: 904-710-1358. They'll take care of you!";
   }
   if (handoffOrInquiry.test(replyLower) || inboundText.includes("?")) {
     return handoffResponse();
